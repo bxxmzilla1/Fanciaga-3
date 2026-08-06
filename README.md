@@ -7,8 +7,8 @@ tablet, browser — and drives it.
 ## How it works
 
 - Sign in with your **Fanciaga account** (same email & password as the desktop app).
-- Fanciaga 3 watches for your desktop app's heartbeat and shows it as **ONLINE**. When it pairs,
-  the desktop app's screen flashes fullscreen colors every second to confirm the connection.
+- Fanciaga 3 watches for your desktop app's heartbeat and shows it as **ONLINE**, then pairs with
+  it automatically.
 - Three cards: **AI Generation**, **Editing**, and **Posting**.
 - **Posting** asks for a **Script** file (`*.fanciaga-script.json`) recorded by the desktop app's
   **Script Writter** section: it replicates your recorded group-vault content picks, thumbnail

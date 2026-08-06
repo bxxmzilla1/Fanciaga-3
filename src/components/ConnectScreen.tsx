@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { fetchEngineLink, flashEngine, setPwaConnected, type EngineLink } from '../lib/engine'
+import { fetchEngineLink, setPwaConnected, type EngineLink } from '../lib/engine'
 import { supabase } from '../lib/supabase'
 
 // Searches for the user's Fanciaga desktop app (the engine) by watching its
-// heartbeat. When it's ONLINE: pair (pwa_connected = true) and tell the
-// DESKTOP app to flash its screen fullscreen (color changing every second
-// with the words) — the PWA itself just shows a calm confirmation.
+// heartbeat. When it's ONLINE: pair (pwa_connected = true) and show a brief
+// confirmation before entering the app.
 
 const CONFIRM_SECONDS = 3
 
@@ -29,9 +28,7 @@ export default function ConnectScreen(props: {
       setChecks((n) => n + 1)
       if (l?.online && !pairedRef.current) {
         pairedRef.current = true
-        // Pair + flash the desktop app fullscreen (fire-and-forget).
         void setPwaConnected(props.userId, true)
-        void flashEngine(props.userId, 'FANCIAGA 3 CONNECTED', 6)
         setPhase('confirming')
       }
     }
@@ -43,7 +40,7 @@ export default function ConnectScreen(props: {
     }
   }, [phase, props.userId])
 
-  // Brief confirmation (the flashing happens on the DESKTOP app), then enter.
+  // Brief confirmation, then enter the app.
   useEffect(() => {
     if (phase !== 'confirming') return
     const t = window.setTimeout(props.onConnected, CONFIRM_SECONDS * 1000)
@@ -60,9 +57,7 @@ export default function ConnectScreen(props: {
         <h1 className="bg-gradient-to-r from-accent to-accent2 bg-clip-text text-3xl font-extrabold tracking-widest text-transparent sm:text-5xl">
           ENGINE ONLINE
         </h1>
-        <p className="text-sm text-gray-400">
-          Fanciaga app connected — look at your desktop: its screen is flashing to confirm.
-        </p>
+        <p className="text-sm text-gray-400">Fanciaga app connected.</p>
       </div>
     )
   }

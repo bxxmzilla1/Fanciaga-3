@@ -69,12 +69,6 @@ async function waitForCommand(id: string, timeoutMs: number): Promise<Record<str
   }
 }
 
-/** Make the Fanciaga desktop window flash fullscreen colors every second. */
-export async function flashEngine(userId: string, text: string, seconds = 6): Promise<void> {
-  const id = await sendCommand(userId, 'flash', { text, seconds })
-  await waitForCommand(id, 30_000).catch(() => {})
-}
-
 /** All Instagram accounts connected to the engine (for the IG Selector). */
 export async function listEngineAccounts(userId: string): Promise<EngineAccount[]> {
   const id = await sendCommand(userId, 'list_accounts', {})
