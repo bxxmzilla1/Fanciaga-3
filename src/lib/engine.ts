@@ -91,6 +91,35 @@ export async function runScriptOnEngine(
   }
 }
 
+/**
+ * Queue the same script for many Instagram accounts as separate `run_script`
+ * commands. The desktop engine stacks them and never runs two at once — so
+ * Bundle.social / Grok rate limits stay safe. Returns the command ids in the
+ * same order as `runs` so the UI can wait on each for progress.
+ */
+export async function enqueueScriptStack(
+  userId: string,
+  script: ScriptEntry,
+  runs: Array<{ replacements: Record<string, ScriptAccountRef> }>
+): Promise<string[]> {
+  if (!runs.length) throw new Error('Select at least one Instagram account.')
+  const ids: string[] = []
+  for (const run of runs) {
+    ids.push(await sendCommand(userId, 'run_script', { script, replacements: run.replacements }))
+  }
+  return ids
+}
+
+/** Wait for one previously-enqueued engine command to finish. */
+export async function waitForEngineCommand(id: string, timeoutMs = 10 * 60_000): Promise<RunScriptResult> {
+  const res = await waitForCommand(id, timeoutMs)
+  return {
+    ok: !!res.ok,
+    started: Array.isArray(res.started) ? (res.started as RunScriptResult['started']) : [],
+    errors: Array.isArray(res.errors) ? (res.errors as RunScriptResult['errors']) : []
+  }
+}
+
 /** Disconnect from the engine (PWA-side disconnect button). */
 export async function disconnectEngine(userId: string): Promise<void> {
   await setPwaConnected(userId, false)

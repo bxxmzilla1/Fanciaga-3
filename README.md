@@ -12,8 +12,8 @@ tablet, browser — and drives it.
 - Three cards: **AI Generation**, **Editing**, and **Posting**.
 - **Posting** asks for a **Script** file (`*.fanciaga-script.json`) recorded by the desktop app's
   **Script Writter** section: it replicates your recorded group-vault content picks, thumbnail
-  choices, and per-post time intervals. The **IG Selector** lets you swap the recorded Instagram
-  accounts for different ones before the run.
+  choices, and per-post time intervals. Multi-select Instagram accounts to apply the same script
+  to each of them — runs are **stacked** on the engine (never parallel) so API rate limits stay safe.
 - Disconnect any time from the sidebar (the desktop app also has its own Disconnect button in the
   Script Writter section).
 

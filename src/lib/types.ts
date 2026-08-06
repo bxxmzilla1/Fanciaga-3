@@ -47,6 +47,15 @@ export interface RunScriptResult {
   errors: Array<{ actionId: string; summary: string; error: string }>
 }
 
+/** One entry in a multi-account stacked run (same script → many IG accounts). */
+export interface StackedRunItem {
+  accountId: string
+  username: string
+  status: 'queued' | 'running' | 'done' | 'error'
+  error?: string
+  result?: RunScriptResult
+}
+
 export function parseScriptFile(text: string): ScriptEntry {
   let parsed: unknown
   try {
