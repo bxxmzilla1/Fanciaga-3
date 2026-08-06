@@ -5,6 +5,17 @@ import PostingScreen from './PostingScreen'
 
 type View = 'cards' | 'posting'
 
+// Remember which section is open across browser refreshes.
+const VIEW_KEY = 'f3.view'
+
+function loadSavedView(): View {
+  try {
+    return localStorage.getItem(VIEW_KEY) === 'posting' ? 'posting' : 'cards'
+  } catch {
+    return 'cards'
+  }
+}
+
 const CARDS: Array<{ id: string; title: string; desc: string; emoji: string; enabled: boolean }> = [
   {
     id: 'ai',
@@ -34,9 +45,18 @@ export default function HomeScreen(props: {
   email: string
   onUnpaired: () => void
 }): JSX.Element {
-  const [view, setView] = useState<View>('cards')
+  const [view, setViewState] = useState<View>(loadSavedView)
   const [link, setLink] = useState<EngineLink | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+
+  function setView(v: View): void {
+    setViewState(v)
+    try {
+      localStorage.setItem(VIEW_KEY, v)
+    } catch {
+      // storage unavailable — session-only persistence
+    }
+  }
 
   // Keep an eye on the engine: offline banner + honor a desktop-side disconnect.
   useEffect(() => {

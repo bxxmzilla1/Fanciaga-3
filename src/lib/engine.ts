@@ -69,9 +69,26 @@ async function waitForCommand(id: string, timeoutMs: number): Promise<Record<str
   }
 }
 
-/** All Instagram accounts connected to the engine (for the IG Selector). */
-export async function listEngineAccounts(userId: string): Promise<EngineAccount[]> {
-  const id = await sendCommand(userId, 'list_accounts', {})
+/** One of the custom account labels saved in the Fanciaga app. */
+export interface EngineLabel {
+  id: string
+  name: string
+  count: number
+}
+
+/** The custom labels saved in the owner's Fanciaga app (Accounts section). */
+export async function listEngineLabels(userId: string): Promise<EngineLabel[]> {
+  const id = await sendCommand(userId, 'list_labels', {})
+  const res = await waitForCommand(id, 60_000)
+  return Array.isArray(res.labels) ? (res.labels as EngineLabel[]) : []
+}
+
+/**
+ * Instagram accounts connected to the engine. Pass a labelId to load ONLY the
+ * accounts assigned that custom label — much faster than loading everything.
+ */
+export async function listEngineAccounts(userId: string, labelId?: string): Promise<EngineAccount[]> {
+  const id = await sendCommand(userId, 'list_accounts', labelId ? { labelId } : {})
   const res = await waitForCommand(id, 90_000)
   return Array.isArray(res.accounts) ? (res.accounts as EngineAccount[]) : []
 }

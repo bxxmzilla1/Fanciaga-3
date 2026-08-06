@@ -1,5 +1,12 @@
-import { useMemo, useRef, useState } from 'react'
-import { enqueueScriptStack, listEngineAccounts, runScriptOnEngine, waitForEngineCommand } from '../lib/engine'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  enqueueScriptStack,
+  listEngineAccounts,
+  listEngineLabels,
+  runScriptOnEngine,
+  waitForEngineCommand,
+  type EngineLabel
+} from '../lib/engine'
 import {
   parseScriptFile,
   type EngineAccount,
@@ -44,11 +51,35 @@ function replacementsForTarget(
   return out
 }
 
+// Remember the chosen custom label across refreshes.
+const LABEL_KEY = 'f3.labelId'
+
 export default function PostingScreen(props: { userId: string; engineOnline: boolean }): JSX.Element {
   const [script, setScript] = useState<ScriptEntry | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [accounts, setAccounts] = useState<EngineAccount[] | null>(null)
   const [accountsLoading, setAccountsLoading] = useState(false)
+  // Custom labels saved in the Fanciaga app — pick one to load ONLY its
+  // accounts (fast) instead of sweeping the whole organization.
+  const [labels, setLabels] = useState<EngineLabel[] | null>(null)
+  const [labelsLoading, setLabelsLoading] = useState(false)
+  const [labelId, setLabelIdState] = useState<string>(() => {
+    try {
+      return localStorage.getItem(LABEL_KEY) || ''
+    } catch {
+      return ''
+    }
+  })
+
+  function setLabelId(id: string): void {
+    setLabelIdState(id)
+    try {
+      if (id) localStorage.setItem(LABEL_KEY, id)
+      else localStorage.removeItem(LABEL_KEY)
+    } catch {
+      // storage unavailable
+    }
+  }
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [search, setSearch] = useState('')
   const [running, setRunning] = useState(false)
@@ -84,11 +115,33 @@ export default function PostingScreen(props: { userId: string; engineOnline: boo
     }
   }
 
+  async function loadLabels(): Promise<void> {
+    setLabelsLoading(true)
+    try {
+      const list = await listEngineLabels(props.userId)
+      setLabels(list)
+      // Drop a remembered label that no longer exists.
+      if (labelId && !list.some((l) => l.id === labelId)) setLabelId('')
+    } catch {
+      setLabels([])
+    } finally {
+      setLabelsLoading(false)
+    }
+  }
+
+  // Fetch the custom labels from the engine once it's online, so the picker
+  // is ready before the (much heavier) account load.
+  useEffect(() => {
+    if (props.engineOnline && labels === null && !labelsLoading) void loadLabels()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.engineOnline])
+
   async function loadAccounts(): Promise<void> {
     setAccountsLoading(true)
     setError(null)
     try {
-      setAccounts(await listEngineAccounts(props.userId))
+      setAccounts(await listEngineAccounts(props.userId, labelId || undefined))
+      setSelected(new Set())
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load the accounts from the engine.')
     } finally {
@@ -263,26 +316,64 @@ export default function PostingScreen(props: { userId: string; engineOnline: boo
 
           {/* Multi-select IG accounts */}
           <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <div className="text-sm font-semibold text-gray-100">Apply script to accounts</div>
-                <p className="mt-0.5 text-xs text-gray-500">
-                  Multi-select Instagram accounts. The same script runs once per account, stacked
-                  in order — never overlapping.
-                </p>
-              </div>
+            <div>
+              <div className="text-sm font-semibold text-gray-100">Apply script to accounts</div>
+              <p className="mt-0.5 text-xs text-gray-500">
+                Multi-select Instagram accounts. The same script runs once per account, stacked
+                in order — never overlapping.
+              </p>
+            </div>
+
+            {/* Custom label picker — loads only the labeled accounts (fast) */}
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <select
+                className="min-w-0 flex-1 rounded-xl border border-white/10 bg-panel2 px-3 py-2 text-xs text-gray-100 outline-none focus:border-accent/60 disabled:opacity-50"
+                value={labelId}
+                disabled={labelsLoading}
+                onChange={(e) => setLabelId(e.target.value)}
+              >
+                <option value="">
+                  {labelsLoading
+                    ? 'Loading your custom labels…'
+                    : labels && labels.length === 0
+                      ? 'No custom labels saved — all accounts'
+                      : 'All accounts (slower)'}
+                </option>
+                {(labels || []).map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name} ({l.count} account{l.count === 1 ? '' : 's'})
+                  </option>
+                ))}
+              </select>
               <button
-                className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-gray-300 transition-colors hover:bg-white/[0.05] hover:text-white disabled:opacity-50"
+                type="button"
+                className="rounded-xl border border-white/10 px-3 py-2 text-xs text-gray-300 hover:bg-white/[0.05] disabled:opacity-50"
+                disabled={labelsLoading || !props.engineOnline}
+                onClick={() => void loadLabels()}
+                title="Refresh the custom labels saved in your Fanciaga app"
+              >
+                {labelsLoading ? 'Labels…' : 'Refresh labels'}
+              </button>
+              <button
+                className="rounded-xl border border-white/10 px-3 py-2 text-xs text-gray-300 transition-colors hover:bg-white/[0.05] hover:text-white disabled:opacity-50"
                 disabled={accountsLoading || !props.engineOnline}
                 onClick={() => void loadAccounts()}
               >
                 {accountsLoading
                   ? 'Loading from engine…'
                   : accounts
-                    ? 'Reload accounts'
-                    : 'Load accounts from engine'}
+                    ? labelId
+                      ? 'Reload labeled accounts'
+                      : 'Reload accounts'
+                    : labelId
+                      ? 'Load labeled accounts'
+                      : 'Load accounts from engine'}
               </button>
             </div>
+            <p className="mt-1.5 text-[11px] text-gray-600">
+              Pick one of the custom labels saved in your Fanciaga app to load only those Instagram
+              accounts — much faster than loading everything.
+            </p>
 
             {!accounts ? (
               <div className="mt-3 text-xs text-gray-600">
