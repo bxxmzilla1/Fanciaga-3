@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { listScripts } from '../lib/scripts'
-import { loadScriptPreview, signMediaUrl, type PreviewVideo } from '../lib/preview'
+import { loadScriptPreview, saveScriptSchedule, signMediaUrl, type PreviewVideo } from '../lib/preview'
 import type { ScriptAccountRef, ScriptEntry } from '../lib/types'
 
 // Scripts — every script recorded by the Script Writter in the connected
@@ -9,19 +9,6 @@ import type { ScriptAccountRef, ScriptEntry } from '../lib/types'
 
 function accountName(ref: ScriptAccountRef): string {
   return ref.username ? `@${ref.username.replace(/^@+/, '')}` : `#${ref.accountId.slice(0, 8)}…`
-}
-
-function fmtGap(ms: number): string {
-  const mins = Math.round(ms / 60_000)
-  if (mins < 1) return 'right after'
-  const d = Math.floor(mins / (60 * 24))
-  const h = Math.floor((mins % (60 * 24)) / 60)
-  const m = mins % 60
-  const parts: string[] = []
-  if (d) parts.push(`${d}d`)
-  if (h) parts.push(`${h}h`)
-  if (m || parts.length === 0) parts.push(`${m}m`)
-  return parts.join(' ')
 }
 
 function fmtAt(ms: number): string {
@@ -208,20 +195,43 @@ export default function ScriptsScreen(props: {
 }
 
 // ── Preview sidebar — the videos a script posts, in order, with intervals ────
+// Videos load and play right here in the sidebar (no fullscreen), and the wait
+// between each post is editable and saved back to the script.
+
+const MIN = 60_000
+const HOUR = 60 * MIN
+const DAY = 24 * HOUR
+
+function splitGap(ms: number): { d: number; h: number; m: number } {
+  const total = Math.max(0, Math.round(ms / MIN))
+  return { d: Math.floor(total / (24 * 60)), h: Math.floor((total % (24 * 60)) / 60), m: total % 60 }
+}
 
 function ScriptPreviewSidebar(props: { script: ScriptEntry; onClose: () => void }): JSX.Element {
   const [videos, setVideos] = useState<PreviewVideo[] | null>(null)
   const [error, setError] = useState<string | null>(null)
-  // Entry currently playing fullscreen (media is loaded only then).
-  const [playing, setPlaying] = useState<PreviewVideo | null>(null)
+  // Editable gaps (ms) between consecutive posts — length = videos.length - 1.
+  const [gaps, setGaps] = useState<number[]>([])
+  // Anchor time for the first post; edits recompute every later post from here.
+  const [baseAt, setBaseAt] = useState<number>(() => Date.now())
+  const [dirty, setDirty] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [savedNote, setSavedNote] = useState<string | null>(null)
+  // Key of the post playing inline (its media is signed only while open).
+  const [playingKey, setPlayingKey] = useState<string | null>(null)
 
   useEffect(() => {
     let alive = true
     setVideos(null)
     setError(null)
+    setDirty(false)
+    setPlayingKey(null)
     loadScriptPreview(props.script)
       .then((v) => {
-        if (alive) setVideos(v)
+        if (!alive) return
+        setVideos(v)
+        setBaseAt(v[0]?.at ?? Date.now())
+        setGaps(v.slice(0, -1).map((x) => x.gapToNextMs ?? 0))
       })
       .catch((e) => {
         if (alive) setError(e instanceof Error ? e.message : 'Could not load the preview.')
@@ -230,6 +240,56 @@ function ScriptPreviewSidebar(props: { script: ScriptEntry; onClose: () => void 
       alive = false
     }
   }, [props.script])
+
+  // Absolute post times recomputed from the anchor + (possibly edited) gaps.
+  const times = useMemo(() => {
+    if (!videos) return [] as number[]
+    const out: number[] = []
+    let t = baseAt
+    for (let i = 0; i < videos.length; i++) {
+      out.push(t)
+      t += gaps[i] ?? 0
+    }
+    return out
+  }, [videos, gaps, baseAt])
+
+  function setGap(i: number, ms: number): void {
+    setGaps((prev) => {
+      const next = [...prev]
+      next[i] = Math.max(0, ms)
+      return next
+    })
+    setDirty(true)
+    setSavedNote(null)
+  }
+
+  async function save(): Promise<void> {
+    if (!videos) return
+    setSaving(true)
+    setError(null)
+    try {
+      await saveScriptSchedule(
+        props.script,
+        videos.map((v, i) => ({ actionIndex: v.actionIndex, slotIndex: v.slotIndex, at: times[i] }))
+      )
+      // Reflect the saved times locally so the list stays in sync.
+      setVideos((prev) =>
+        prev
+          ? prev.map((v, i) => ({
+              ...v,
+              at: times[i],
+              gapToNextMs: i < prev.length - 1 ? gaps[i] ?? 0 : null
+            }))
+          : prev
+      )
+      setDirty(false)
+      setSavedNote('Intervals saved ✓')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not save the new intervals.')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
     <>
@@ -241,7 +301,7 @@ function ScriptPreviewSidebar(props: { script: ScriptEntry; onClose: () => void 
           <div className="min-w-0">
             <h2 className="truncate text-sm font-semibold text-gray-100">Preview — {props.script.name}</h2>
             <p className="mt-0.5 text-[11px] text-gray-500">
-              Videos in posting order · tap play to watch fullscreen
+              Play videos here · edit the wait between posts, then save
             </p>
           </div>
           <button
@@ -254,107 +314,159 @@ function ScriptPreviewSidebar(props: { script: ScriptEntry; onClose: () => void 
 
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
           {error ? (
-            <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+            <div className="mb-3 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
               {error}
             </div>
-          ) : videos === null ? (
+          ) : null}
+          {videos === null && !error ? (
             <p className="py-8 text-center text-xs text-gray-500">Loading the posting order…</p>
-          ) : videos.length === 0 ? (
+          ) : videos && videos.length === 0 ? (
             <p className="py-8 text-center text-xs text-gray-500">
               This script has no posts to preview.
             </p>
-          ) : (
+          ) : videos ? (
             <div className="flex flex-col">
               {videos.map((v, i) => (
                 <div key={v.key}>
-                  <div className="flex items-center gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] p-2">
-                    {/* First-frame thumbnail with a play button — the actual
-                        video is never loaded here, only when playing. */}
-                    <button
-                      className="group relative h-20 w-12 shrink-0 overflow-hidden rounded-lg border border-white/10 bg-black/40"
-                      onClick={() => v.mediaPath && setPlaying(v)}
-                      disabled={!v.mediaPath}
-                      title={v.mediaPath ? 'Play fullscreen' : 'No cloud copy available'}
-                    >
-                      {v.thumbUrl ? (
-                        <img
-                          src={v.thumbUrl}
-                          alt={v.title}
-                          loading="lazy"
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <span className="flex h-full w-full items-center justify-center text-lg text-gray-600">
-                          🎞
-                        </span>
-                      )}
-                      {v.mediaPath && (
-                        <span className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-80 transition-opacity group-hover:opacity-100">
-                          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white/90 pl-0.5 text-[10px] text-black">
-                            ▶
+                  <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-2">
+                    <div className="flex items-center gap-3">
+                      {/* Thumbnail → plays the video inline in this same panel. */}
+                      <button
+                        className="group relative h-20 w-12 shrink-0 overflow-hidden rounded-lg border border-white/10 bg-black/40"
+                        onClick={() => v.mediaPath && setPlayingKey(playingKey === v.key ? null : v.key)}
+                        disabled={!v.mediaPath}
+                        title={v.mediaPath ? 'Play here' : 'No cloud copy available'}
+                      >
+                        {v.thumbUrl ? (
+                          <img src={v.thumbUrl} alt={v.title} loading="lazy" className="h-full w-full object-cover" />
+                        ) : (
+                          <span className="flex h-full w-full items-center justify-center text-lg text-gray-600">🎞</span>
+                        )}
+                        {v.mediaPath && (
+                          <span className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-80 transition-opacity group-hover:opacity-100">
+                            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white/90 pl-0.5 text-[10px] text-black">
+                              {playingKey === v.key ? '■' : '▶'}
+                            </span>
                           </span>
-                        </span>
-                      )}
-                      {v.durationSeconds > 0 && (
-                        <span className="absolute bottom-0.5 right-0.5 rounded bg-black/80 px-1 text-[9px] tabular-nums text-white">
-                          {fmtDuration(v.durationSeconds)}
-                        </span>
-                      )}
-                    </button>
+                        )}
+                        {v.durationSeconds > 0 && (
+                          <span className="absolute bottom-0.5 right-0.5 rounded bg-black/80 px-1 text-[9px] tabular-nums text-white">
+                            {fmtDuration(v.durationSeconds)}
+                          </span>
+                        )}
+                      </button>
 
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="shrink-0 rounded-full bg-accent/15 px-1.5 text-[10px] font-semibold text-accent">
-                          {i + 1}
-                        </span>
-                        <span className="truncate text-xs font-medium text-gray-200" title={v.title}>
-                          {v.title}
-                        </span>
-                      </div>
-                      {v.account && (
-                        <div className="mt-0.5 truncate text-[11px] text-gray-400">{v.account}</div>
-                      )}
-                      <div className="mt-0.5 text-[10px] text-gray-500">
-                        {v.at != null ? fmtAt(v.at) : 'Posts immediately'}
-                        {v.kind === 'image' ? ' · image' : ''}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="shrink-0 rounded-full bg-accent/15 px-1.5 text-[10px] font-semibold text-accent">
+                            {i + 1}
+                          </span>
+                          <span className="truncate text-xs font-medium text-gray-200" title={v.title}>
+                            {v.title}
+                          </span>
+                        </div>
+                        {v.account && <div className="mt-0.5 truncate text-[11px] text-gray-400">{v.account}</div>}
+                        <div className="mt-0.5 text-[10px] text-gray-500">
+                          {fmtAt(times[i])}
+                          {v.kind === 'image' ? ' · image' : ''}
+                        </div>
                       </div>
                     </div>
+
+                    {/* Inline player — media is signed only while this is open. */}
+                    {playingKey === v.key && (
+                      <InlinePlayer video={v} onClose={() => setPlayingKey(null)} />
+                    )}
                   </div>
 
-                  {/* Interval until the NEXT post */}
+                  {/* Editable interval until the NEXT post */}
                   {i < videos.length - 1 && (
-                    <div className="flex items-center gap-2 py-1.5 pl-6">
-                      <span className="h-4 w-px bg-white/15" />
-                      <span className="text-[10px] text-gray-500">
-                        {v.gapToNextMs != null
-                          ? `wait ${fmtGap(v.gapToNextMs)} until the next post`
-                          : 'next post time not set'}
-                      </span>
-                    </div>
+                    <GapEditor value={gaps[i] ?? 0} onChange={(ms) => setGap(i, ms)} />
                   )}
                 </div>
               ))}
             </div>
-          )}
+          ) : null}
         </div>
-      </aside>
 
-      {playing && <FullscreenPlayer video={playing} onClose={() => setPlaying(null)} />}
+        {videos && videos.length > 1 && (
+          <div className="flex items-center justify-between gap-3 border-t border-white/10 px-4 py-3">
+            <span className="text-[11px] text-gray-500">
+              {savedNote ? <span className="text-emerald-400">{savedNote}</span> : dirty ? 'Unsaved interval changes' : 'Intervals up to date'}
+            </span>
+            <button
+              className="rounded-xl bg-accent px-4 py-2 text-xs font-semibold text-white shadow-glow transition-transform hover:scale-[1.02] disabled:opacity-50 disabled:hover:scale-100"
+              disabled={!dirty || saving}
+              onClick={() => void save()}
+            >
+              {saving ? 'Saving…' : 'Save intervals'}
+            </button>
+          </div>
+        )}
+      </aside>
     </>
   )
 }
 
-// ── Fullscreen player — loads the media only while open, then tears it down ──
+// ── Interval editor — days / hours / minutes between two posts ───────────────
 
-function FullscreenPlayer(props: { video: PreviewVideo; onClose: () => void }): JSX.Element {
+function GapEditor(props: { value: number; onChange: (ms: number) => void }): JSX.Element {
+  const { d, h, m } = splitGap(props.value)
+  const set = (nd: number, nh: number, nm: number): void =>
+    props.onChange(nd * DAY + nh * HOUR + nm * MIN)
+  const box =
+    'w-11 rounded-md border border-white/10 bg-black/30 px-1.5 py-1 text-center text-[11px] tabular-nums text-gray-100 outline-none focus:border-accent/60'
+  return (
+    <div className="flex items-center gap-2 py-1.5 pl-6">
+      <span className="h-4 w-px bg-white/15" />
+      <span className="text-[10px] text-gray-500">wait</span>
+      <label className="flex items-center gap-1 text-[10px] text-gray-500">
+        <input
+          type="number"
+          min={0}
+          value={d}
+          className={box}
+          onChange={(e) => set(Math.max(0, Number(e.target.value) || 0), h, m)}
+        />
+        d
+      </label>
+      <label className="flex items-center gap-1 text-[10px] text-gray-500">
+        <input
+          type="number"
+          min={0}
+          max={23}
+          value={h}
+          className={box}
+          onChange={(e) => set(d, Math.max(0, Number(e.target.value) || 0), m)}
+        />
+        h
+      </label>
+      <label className="flex items-center gap-1 text-[10px] text-gray-500">
+        <input
+          type="number"
+          min={0}
+          max={59}
+          value={m}
+          className={box}
+          onChange={(e) => set(d, h, Math.max(0, Number(e.target.value) || 0))}
+        />
+        m
+      </label>
+    </div>
+  )
+}
+
+// ── Inline player — loads the media only while open, then tears it down ──────
+
+function InlinePlayer(props: { video: PreviewVideo; onClose: () => void }): JSX.Element {
   const [url, setUrl] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
-  const wrapRef = useRef<HTMLDivElement>(null)
 
-  // The heavy media URL is signed only now — the sidebar list never loads it.
   useEffect(() => {
     let alive = true
+    setUrl(null)
+    setError(null)
     signMediaUrl(props.video)
       .then((u) => {
         if (alive) setUrl(u)
@@ -362,64 +474,32 @@ function FullscreenPlayer(props: { video: PreviewVideo; onClose: () => void }): 
       .catch((e) => {
         if (alive) setError(e instanceof Error ? e.message : 'Could not load the video.')
       })
+    // Drop the buffered media on unmount so the panel stays light.
     return () => {
       alive = false
+      const v = videoRef.current
+      if (v) {
+        try {
+          v.pause()
+          v.removeAttribute('src')
+          v.load()
+        } catch {
+          // already detached
+        }
+      }
     }
   }, [props.video])
 
-  // Best-effort real fullscreen; falls back to the full-viewport overlay.
-  useEffect(() => {
-    const el = wrapRef.current
-    el?.requestFullscreen?.().catch(() => undefined)
-    const onFsChange = (): void => {
-      if (!document.fullscreenElement) close()
-    }
-    document.addEventListener('fullscreenchange', onFsChange)
-    return () => document.removeEventListener('fullscreenchange', onFsChange)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  /** Stop playback and drop the buffered media before unmounting, so closing
-   *  the fullscreen frees the decoder + cache and the app stays fast. */
-  function close(): void {
-    const v = videoRef.current
-    if (v) {
-      try {
-        v.pause()
-        v.removeAttribute('src')
-        v.load()
-      } catch {
-        // already detached
-      }
-    }
-    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined)
-    props.onClose()
-  }
-
   return (
-    <div ref={wrapRef} className="fixed inset-0 z-[60] flex items-center justify-center bg-black">
-      <button
-        className="absolute right-4 top-4 z-10 rounded-full bg-white/10 px-3 py-1.5 text-sm text-white backdrop-blur transition-colors hover:bg-white/20"
-        onClick={close}
-      >
-        ✕ Close
-      </button>
-
+    <div className="mt-2 overflow-hidden rounded-lg border border-white/10 bg-black">
       {error ? (
-        <p className="max-w-sm px-6 text-center text-sm text-red-300">{error}</p>
+        <p className="px-3 py-4 text-center text-[11px] text-red-300">{error}</p>
       ) : !url ? (
-        <p className="text-sm text-gray-400">Loading…</p>
+        <p className="px-3 py-6 text-center text-[11px] text-gray-400">Loading…</p>
       ) : props.video.kind === 'image' ? (
-        <img src={url} alt={props.video.title} className="max-h-full max-w-full object-contain" />
+        <img src={url} alt={props.video.title} className="max-h-72 w-full object-contain" />
       ) : (
-        <video
-          ref={videoRef}
-          src={url}
-          autoPlay
-          controls
-          playsInline
-          className="max-h-full max-w-full"
-        />
+        <video ref={videoRef} src={url} autoPlay controls playsInline className="max-h-72 w-full" />
       )}
     </div>
   )

@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { ScriptAccountRef, ScriptEntry } from './types'
+import type { ScriptAccountRef, ScriptAction, ScriptEntry } from './types'
 
 // Script preview — resolves the videos a script will post, in posting order,
 // straight from Supabase (the PWA is signed into the same Fanciaga account, so
@@ -28,6 +28,10 @@ export interface PreviewVideo {
   account: string
   /** Wait after THIS post until the next one goes out (null = unknown). */
   gapToNextMs: number | null
+  /** Where this post lives in the script, so edited intervals can be written back. */
+  actionIndex: number
+  /** Slot index within a striker_batch action, or null for single-post actions. */
+  slotIndex: number | null
 }
 
 interface Ref {
@@ -35,6 +39,8 @@ interface Ref {
   itemId: string
   at: number | null
   account: string
+  actionIndex: number
+  slotIndex: number | null
 }
 
 const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'])
@@ -47,7 +53,7 @@ function usernameOf(refs: ScriptAccountRef[], accountId: string): string {
 /** The ordered media references a script's actions will post. */
 function extractRefs(script: ScriptEntry): Ref[] {
   const out: Ref[] = []
-  for (const action of script.actions) {
+  script.actions.forEach((action, actionIndex) => {
     const input = (action.input || {}) as Record<string, unknown>
     if (action.type === 'striker_batch') {
       // Striker batches are logged with their slots already in chronological
@@ -55,20 +61,22 @@ function extractRefs(script: ScriptEntry): Ref[] {
       const slots = Array.isArray(input.slots)
         ? (input.slots as Array<Record<string, unknown>>)
         : []
-      for (const s of slots) {
-        if (!s.itemId) continue
+      slots.forEach((s, slotIndex) => {
+        if (!s.itemId) return
         const at = s.scheduledFor ? new Date(String(s.scheduledFor)).getTime() : NaN
         out.push({
           source: s.source === 'group' ? 'group' : 'mine',
           itemId: String(s.itemId),
           at: Number.isFinite(at) ? at : null,
-          account: usernameOf(action.accounts, String(s.accountId || ''))
+          account: usernameOf(action.accounts, String(s.accountId || '')),
+          actionIndex,
+          slotIndex
         })
-      }
+      })
     } else {
       const isGroup = action.type === 'multi_post_group'
       const itemId = isGroup ? input.itemId : input.presetId
-      if (!itemId) continue
+      if (!itemId) return
       const at = input.scheduledFor ? new Date(String(input.scheduledFor)).getTime() : NaN
       const names = action.accounts
         .map((a) => (a.username ? `@${a.username.replace(/^@+/, '')}` : ''))
@@ -78,10 +86,12 @@ function extractRefs(script: ScriptEntry): Ref[] {
         itemId: String(itemId),
         at: Number.isFinite(at) ? at : null,
         account:
-          names.slice(0, 2).join(', ') + (names.length > 2 ? ` +${names.length - 2} more` : '')
+          names.slice(0, 2).join(', ') + (names.length > 2 ? ` +${names.length - 2} more` : ''),
+        actionIndex,
+        slotIndex: null
       })
     }
-  }
+  })
   return out
 }
 
@@ -154,7 +164,9 @@ export async function loadScriptPreview(script: ScriptEntry): Promise<PreviewVid
       mediaPath: row?.video_path || null,
       at: r.at,
       account: r.account,
-      gapToNextMs: null
+      gapToNextMs: null,
+      actionIndex: r.actionIndex,
+      slotIndex: r.slotIndex
     }
   })
 
@@ -175,4 +187,34 @@ export async function signMediaUrl(v: PreviewVideo): Promise<string> {
   const { data, error } = await supabase.storage.from(v.bucket).createSignedUrl(v.mediaPath, 60 * 60)
   if (error || !data?.signedUrl) throw new Error(error?.message || 'Could not create the playback link.')
   return data.signedUrl
+}
+
+/**
+ * Persist edited posting times back to the script's `actions` in Supabase. The
+ * schedule maps each post (by its action/slot origin) to a new absolute epoch
+ * ms, which is written as an ISO `scheduledFor`. The desktop Script Writter and
+ * the preview both read these timestamps, so the new intervals apply everywhere.
+ */
+export async function saveScriptSchedule(
+  script: ScriptEntry,
+  schedule: Array<{ actionIndex: number; slotIndex: number | null; at: number }>
+): Promise<void> {
+  const actions = JSON.parse(JSON.stringify(script.actions)) as ScriptAction[]
+  for (const s of schedule) {
+    const action = actions[s.actionIndex]
+    if (!action) continue
+    const input = ((action.input as Record<string, unknown>) || {}) as Record<string, unknown>
+    const iso = new Date(s.at).toISOString()
+    if (s.slotIndex != null) {
+      const slots = Array.isArray(input.slots)
+        ? (input.slots as Array<Record<string, unknown>>)
+        : []
+      if (slots[s.slotIndex]) slots[s.slotIndex].scheduledFor = iso
+    } else {
+      input.scheduledFor = iso
+    }
+    action.input = input
+  }
+  const { error } = await supabase.from('scripts').update({ actions }).eq('id', script.id)
+  if (error) throw new Error(error.message || 'Could not save the new intervals.')
 }
