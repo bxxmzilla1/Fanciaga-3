@@ -3,11 +3,11 @@ import { fetchEngineLink, flashEngine, setPwaConnected, type EngineLink } from '
 import { supabase } from '../lib/supabase'
 
 // Searches for the user's Fanciaga desktop app (the engine) by watching its
-// heartbeat. When it's ONLINE: pair (pwa_connected = true), tell the engine to
-// flash its screen fullscreen (color changing every second with the words),
-// and mirror the same confirmation flash here before entering the app.
+// heartbeat. When it's ONLINE: pair (pwa_connected = true) and tell the
+// DESKTOP app to flash its screen fullscreen (color changing every second
+// with the words) — the PWA itself just shows a calm confirmation.
 
-const CONFIRM_SECONDS = 5
+const CONFIRM_SECONDS = 3
 
 export default function ConnectScreen(props: {
   userId: string
@@ -43,7 +43,7 @@ export default function ConnectScreen(props: {
     }
   }, [phase, props.userId])
 
-  // Confirmation flash, then enter the app.
+  // Brief confirmation (the flashing happens on the DESKTOP app), then enter.
   useEffect(() => {
     if (phase !== 'confirming') return
     const t = window.setTimeout(props.onConnected, CONFIRM_SECONDS * 1000)
@@ -53,11 +53,16 @@ export default function ConnectScreen(props: {
 
   if (phase === 'confirming') {
     return (
-      <div className="flash-screen flex h-full flex-col items-center justify-center gap-4 text-center">
-        <h1 className="px-6 text-5xl font-extrabold tracking-widest text-white drop-shadow-lg sm:text-7xl">
+      <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
+        <div className="flex h-20 w-20 items-center justify-center rounded-full border-2 border-emerald-400/60 bg-emerald-500/10 text-4xl text-emerald-300">
+          ✓
+        </div>
+        <h1 className="bg-gradient-to-r from-accent to-accent2 bg-clip-text text-3xl font-extrabold tracking-widest text-transparent sm:text-5xl">
           ENGINE ONLINE
         </h1>
-        <p className="text-lg font-semibold text-white/90">Fanciaga app connected ✓</p>
+        <p className="text-sm text-gray-400">
+          Fanciaga app connected — look at your desktop: its screen is flashing to confirm.
+        </p>
       </div>
     )
   }

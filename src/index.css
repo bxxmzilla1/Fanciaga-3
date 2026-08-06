@@ -26,23 +26,3 @@ body {
 .radar-ring {
   animation: radar 1.6s ease-out infinite;
 }
-
-/* Fullscreen confirmation flash: switches color every second with the words. */
-@keyframes flashColors {
-  0%,
-  100% {
-    background-color: #7c6cff;
-  }
-  25% {
-    background-color: #c061ff;
-  }
-  50% {
-    background-color: #16a34a;
-  }
-  75% {
-    background-color: #0ea5e9;
-  }
-}
-.flash-screen {
-  animation: flashColors 4s steps(1, end) infinite;
-}
