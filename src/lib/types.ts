@@ -56,6 +56,32 @@ export interface StackedRunItem {
   result?: RunScriptResult
 }
 
+/**
+ * Map a row of the Supabase `scripts` table (written by the desktop Script
+ * Writter) to a ScriptEntry. The `accounts` jsonb column holds
+ * `{ list, replacements }` (older rows may be a bare array).
+ */
+export function scriptRowToEntry(r: Record<string, unknown>): ScriptEntry {
+  const accountsRaw = (r.accounts ?? {}) as Record<string, unknown>
+  const list = Array.isArray(accountsRaw.list)
+    ? (accountsRaw.list as ScriptAccountRef[])
+    : Array.isArray(r.accounts)
+      ? (r.accounts as ScriptAccountRef[])
+      : []
+  const replacements =
+    accountsRaw.replacements && typeof accountsRaw.replacements === 'object'
+      ? (accountsRaw.replacements as Record<string, ScriptAccountRef>)
+      : {}
+  return {
+    id: String(r.id),
+    name: String(r.name ?? 'Untitled script'),
+    createdAt: r.created_at ? new Date(String(r.created_at)).getTime() : Date.now(),
+    actions: Array.isArray(r.actions) ? (r.actions as ScriptAction[]) : [],
+    accounts: list,
+    replacements
+  }
+}
+
 export function parseScriptFile(text: string): ScriptEntry {
   let parsed: unknown
   try {

@@ -54,8 +54,13 @@ function replacementsForTarget(
 // Remember the chosen custom label across refreshes.
 const LABEL_KEY = 'f3.labelId'
 
-export default function PostingScreen(props: { userId: string; engineOnline: boolean }): JSX.Element {
-  const [script, setScript] = useState<ScriptEntry | null>(null)
+export default function PostingScreen(props: {
+  userId: string
+  engineOnline: boolean
+  // Preloaded from the Scripts section ("Use in Posting") — skips the file upload.
+  initialScript?: ScriptEntry | null
+}): JSX.Element {
+  const [script, setScript] = useState<ScriptEntry | null>(props.initialScript ?? null)
   const [error, setError] = useState<string | null>(null)
   const [accounts, setAccounts] = useState<EngineAccount[] | null>(null)
   const [accountsLoading, setAccountsLoading] = useState(false)

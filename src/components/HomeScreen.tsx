@@ -1,16 +1,19 @@
 import { useEffect, useState } from 'react'
 import { disconnectEngine, fetchEngineLink, type EngineLink } from '../lib/engine'
 import { supabase } from '../lib/supabase'
+import type { ScriptEntry } from '../lib/types'
 import PostingScreen from './PostingScreen'
+import ScriptsScreen from './ScriptsScreen'
 
-type View = 'cards' | 'posting'
+type View = 'cards' | 'posting' | 'scripts'
 
 // Remember which section is open across browser refreshes.
 const VIEW_KEY = 'f3.view'
 
 function loadSavedView(): View {
   try {
-    return localStorage.getItem(VIEW_KEY) === 'posting' ? 'posting' : 'cards'
+    const v = localStorage.getItem(VIEW_KEY)
+    return v === 'posting' || v === 'scripts' ? v : 'cards'
   } catch {
     return 'cards'
   }
@@ -48,6 +51,8 @@ export default function HomeScreen(props: {
   const [view, setViewState] = useState<View>(loadSavedView)
   const [link, setLink] = useState<EngineLink | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  // A script picked in the Scripts section, preloaded into Posting.
+  const [pickedScript, setPickedScript] = useState<ScriptEntry | null>(null)
 
   function setView(v: View): void {
     setViewState(v)
@@ -115,6 +120,14 @@ export default function HomeScreen(props: {
             onClick={() => setView('posting')}
           >
             Posting
+          </button>
+          <button
+            className={`rounded-xl px-3 py-2.5 text-left text-sm transition-colors ${
+              view === 'scripts' ? 'bg-accent/15 text-white' : 'text-gray-400 hover:bg-white/[0.05] hover:text-gray-100'
+            }`}
+            onClick={() => setView('scripts')}
+          >
+            Scripts
           </button>
         </nav>
 
@@ -194,8 +207,21 @@ export default function HomeScreen(props: {
               ))}
             </div>
           </div>
+        ) : view === 'scripts' ? (
+          <ScriptsScreen
+            userId={props.userId}
+            onUseInPosting={(s) => {
+              setPickedScript(s)
+              setView('posting')
+            }}
+          />
         ) : (
-          <PostingScreen userId={props.userId} engineOnline={!!link?.online} />
+          <PostingScreen
+            key={pickedScript?.id || 'default'}
+            userId={props.userId}
+            engineOnline={!!link?.online}
+            initialScript={pickedScript}
+          />
         )}
       </main>
     </div>
