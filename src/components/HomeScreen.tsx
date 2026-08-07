@@ -1,5 +1,12 @@
 import { useEffect, useState } from 'react'
-import { disconnectEngine, fetchEngineLink, type EngineLink } from '../lib/engine'
+import {
+  disconnectEngine,
+  fetchEngineLink,
+  listEngineInstances,
+  setAssignedInstance,
+  type EngineInstance,
+  type EngineLink
+} from '../lib/engine'
 import { supabase } from '../lib/supabase'
 import type { ScriptEntry } from '../lib/types'
 import PostingScreen from './PostingScreen'
@@ -53,6 +60,9 @@ export default function HomeScreen(props: {
   const [notice, setNotice] = useState<string | null>(null)
   // A script picked in the Scripts section, preloaded into Posting.
   const [pickedScript, setPickedScript] = useState<ScriptEntry | null>(null)
+  // Every Fanciaga app logged into this account (for the script assigner).
+  const [instances, setInstances] = useState<EngineInstance[]>([])
+  const [assignOpen, setAssignOpen] = useState(false)
 
   function setView(v: View): void {
     setViewState(v)
@@ -67,9 +77,13 @@ export default function HomeScreen(props: {
   useEffect(() => {
     let alive = true
     const check = async (): Promise<void> => {
-      const l = await fetchEngineLink(props.userId).catch(() => null)
+      const [l, inst] = await Promise.all([
+        fetchEngineLink(props.userId).catch(() => null),
+        listEngineInstances(props.userId).catch(() => [] as EngineInstance[])
+      ])
       if (!alive) return
       setLink(l)
+      setInstances(inst)
       if (l && !l.pwaConnected) props.onUnpaired()
     }
     void check()
@@ -85,6 +99,21 @@ export default function HomeScreen(props: {
     await disconnectEngine(props.userId)
     props.onUnpaired()
   }
+
+  async function assign(instanceId: string): Promise<void> {
+    try {
+      await setAssignedInstance(props.userId, instanceId)
+      setLink((prev) => (prev ? { ...prev, assignedInstance: instanceId } : prev))
+      setAssignOpen(false)
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : 'Could not save the engine assignment.')
+    }
+  }
+
+  const assignedInstance = link?.assignedInstance || ''
+  const assignedInfo = assignedInstance
+    ? instances.find((i) => i.instanceId === assignedInstance) || null
+    : null
 
   return (
     <div className="flex h-full">
@@ -139,6 +168,25 @@ export default function HomeScreen(props: {
               <span className="text-gray-300">Engine {link?.online ? 'ONLINE' : 'OFFLINE'}</span>
             </div>
             <div className="truncate text-gray-600">{link?.engineName || 'Fanciaga app'}</div>
+            {/* Which Fanciaga app runs the scripts (assigner) */}
+            <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-white/[0.06] pt-1.5">
+              <span className="truncate text-gray-500">
+                Scripts:{' '}
+                {assignedInstance ? (
+                  <span className="font-mono text-accent">
+                    {assignedInfo?.code || assignedInstance.slice(0, 7)}
+                  </span>
+                ) : (
+                  <span className="text-gray-400">any online app</span>
+                )}
+              </span>
+              <button
+                className="shrink-0 rounded-md bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-gray-300 transition-colors hover:bg-white/[0.12] hover:text-white"
+                onClick={() => setAssignOpen(true)}
+              >
+                Assign
+              </button>
+            </div>
           </div>
         </div>
 
@@ -224,6 +272,110 @@ export default function HomeScreen(props: {
           />
         )}
       </main>
+
+      {assignOpen && (
+        <EngineAssignerModal
+          instances={instances}
+          assignedInstance={assignedInstance}
+          onAssign={(id) => void assign(id)}
+          onClose={() => setAssignOpen(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+/**
+ * Assigner — pick which Fanciaga app runs this account's scripts when several
+ * apps are logged in at once. Each app shows its code in Settings so you can
+ * match the list below to the right PC.
+ */
+function EngineAssignerModal(props: {
+  instances: EngineInstance[]
+  assignedInstance: string
+  onAssign: (instanceId: string) => void
+  onClose: () => void
+}): JSX.Element {
+  const { instances, assignedInstance } = props
+
+  function lastSeen(i: EngineInstance): string {
+    if (i.online) return 'Online now'
+    if (!i.onlineAt) return 'Never seen online'
+    return `Last seen ${new Date(i.onlineAt).toLocaleString()}`
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+      onClick={props.onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-3xl border border-white/10 bg-panel p-5 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-1 flex items-center justify-between">
+          <h2 className="text-base font-semibold text-gray-100">Assign scripts to a Fanciaga app</h2>
+          <button className="text-gray-500 hover:text-white" onClick={props.onClose}>
+            ✕
+          </button>
+        </div>
+        <p className="mb-4 text-xs leading-relaxed text-gray-500">
+          Every Fanciaga app logged into this account shows its code in Settings → Account. Pick which
+          one should run the scripts — the others will ignore them.
+        </p>
+
+        <div className="flex max-h-80 flex-col gap-2 overflow-y-auto">
+          <button
+            className={`flex items-center justify-between gap-3 rounded-2xl border px-3 py-2.5 text-left transition-colors ${
+              !assignedInstance
+                ? 'border-accent/50 bg-accent/10'
+                : 'border-white/10 bg-white/[0.02] hover:border-white/25'
+            }`}
+            onClick={() => props.onAssign('')}
+          >
+            <div>
+              <p className="text-sm text-gray-100">Any online app</p>
+              <p className="text-[11px] text-gray-500">First Fanciaga app to respond runs the script.</p>
+            </div>
+            {!assignedInstance && <span className="text-[10px] font-semibold text-accent">ASSIGNED</span>}
+          </button>
+
+          {instances.map((i) => (
+            <button
+              key={i.instanceId}
+              className={`flex items-center justify-between gap-3 rounded-2xl border px-3 py-2.5 text-left transition-colors ${
+                assignedInstance === i.instanceId
+                  ? 'border-accent/50 bg-accent/10'
+                  : 'border-white/10 bg-white/[0.02] hover:border-white/25'
+              }`}
+              onClick={() => props.onAssign(i.instanceId)}
+            >
+              <div className="min-w-0">
+                <p className="flex items-center gap-2 text-sm text-gray-100">
+                  <span className="font-mono font-semibold tracking-widest text-accent">
+                    {i.code || i.instanceId.slice(0, 7)}
+                  </span>
+                  <span className="truncate text-gray-400">{i.name || 'Fanciaga app'}</span>
+                </p>
+                <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-gray-500">
+                  <span className={`h-1.5 w-1.5 rounded-full ${i.online ? 'bg-emerald-400' : 'bg-red-400'}`} />
+                  {lastSeen(i)}
+                </p>
+              </div>
+              {assignedInstance === i.instanceId && (
+                <span className="shrink-0 text-[10px] font-semibold text-accent">ASSIGNED</span>
+              )}
+            </button>
+          ))}
+
+          {instances.length === 0 && (
+            <p className="rounded-2xl border border-white/10 bg-white/[0.02] px-3 py-4 text-center text-xs text-gray-500">
+              No Fanciaga apps found yet. Open the desktop app, sign in, and it will appear here within a
+              few seconds. (Make sure the latest database schema is applied.)
+            </p>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

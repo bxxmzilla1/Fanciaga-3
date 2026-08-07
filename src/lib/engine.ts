@@ -15,23 +15,70 @@ export interface EngineLink {
   onlineAt: string | null
   online: boolean
   pwaConnected: boolean
+  /** Instance id assigned to run the scripts ('' = any online Fanciaga app). */
+  assignedInstance: string
 }
 
 export async function fetchEngineLink(userId: string): Promise<EngineLink | null> {
+  // select('*') keeps this working against databases that don't have the
+  // newer `assigned_instance` column yet.
   const { data, error } = await supabase
     .from('engine_links')
-    .select('engine_name, engine_online_at, pwa_connected')
+    .select('*')
     .eq('user_id', userId)
     .maybeSingle()
   if (error || !data) return null
-  const onlineAt = data.engine_online_at ? String(data.engine_online_at) : null
+  const row = data as Record<string, unknown>
+  const onlineAt = row.engine_online_at ? String(row.engine_online_at) : null
   const online = !!onlineAt && Date.now() - new Date(onlineAt).getTime() < ONLINE_WINDOW_MS
   return {
-    engineName: String(data.engine_name ?? ''),
+    engineName: String(row.engine_name ?? ''),
     onlineAt,
     online,
-    pwaConnected: !!data.pwa_connected
+    pwaConnected: !!row.pwa_connected,
+    assignedInstance: String(row.assigned_instance ?? '')
   }
+}
+
+// ── Engine instances (assigner) ──────────────────────────────────────────────
+// Several Fanciaga apps can be logged into the same account on different PCs.
+// Each heartbeats a row in `engine_instances` with the short code shown in
+// its Settings; the assigner pins the scripts to one of them.
+
+export interface EngineInstance {
+  instanceId: string
+  code: string
+  name: string
+  onlineAt: string | null
+  online: boolean
+}
+
+export async function listEngineInstances(userId: string): Promise<EngineInstance[]> {
+  const { data, error } = await supabase
+    .from('engine_instances')
+    .select('*')
+    .eq('user_id', userId)
+    .order('online_at', { ascending: false })
+  if (error || !data) return []
+  return (data as Array<Record<string, unknown>>).map((r) => {
+    const onlineAt = r.online_at ? String(r.online_at) : null
+    return {
+      instanceId: String(r.instance_id ?? ''),
+      code: String(r.code ?? ''),
+      name: String(r.name ?? ''),
+      onlineAt,
+      online: !!onlineAt && Date.now() - new Date(onlineAt).getTime() < ONLINE_WINDOW_MS
+    }
+  })
+}
+
+/** Pin this account's scripts to one Fanciaga app ('' = any online app). */
+export async function setAssignedInstance(userId: string, instanceId: string): Promise<void> {
+  const { error } = await supabase
+    .from('engine_links')
+    .update({ assigned_instance: instanceId, updated_at: new Date().toISOString() })
+    .eq('user_id', userId)
+  if (error) throw new Error(error.message || 'Could not save the engine assignment.')
 }
 
 export async function setPwaConnected(userId: string, connected: boolean): Promise<void> {
