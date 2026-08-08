@@ -19,7 +19,29 @@ export interface VaultItem {
   thumbUrl: string | null
   /** Storage path of the media — signed on demand when the user presses play. */
   mediaPath: string
+  /** Vault tab (folder) the item is filed into — null = unsorted. */
+  tabId: string | null
   createdAt: number
+}
+
+/** A custom tab (folder) inside a group's shared vault. */
+export interface VaultTab {
+  id: string
+  name: string
+}
+
+/** The tabs of one group vault, in the same order the desktop app shows them. */
+export async function listGroupVaultTabs(groupId: string): Promise<VaultTab[]> {
+  const { data, error } = await supabase
+    .from('group_vault_tabs')
+    .select('id, name')
+    .eq('group_id', groupId)
+    .order('created_at', { ascending: true })
+  if (error) throw new Error(error.message || 'Could not load the vault tabs.')
+  return ((data as Array<Record<string, unknown>>) || []).map((r) => ({
+    id: String(r.id),
+    name: String(r.name || 'Untitled tab')
+  }))
 }
 
 const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'])
@@ -41,7 +63,7 @@ export async function listMyGroups(): Promise<VaultGroup[]> {
 export async function listGroupVaultItems(groupId: string): Promise<VaultItem[]> {
   const { data, error } = await supabase
     .from('group_vault_items')
-    .select('id, title, video_path, thumb_path, ext, duration, created_at')
+    .select('id, title, video_path, thumb_path, ext, duration, tab_id, created_at')
     .eq('group_id', groupId)
     .order('created_at', { ascending: false })
   if (error) throw new Error(error.message || 'Could not load that group vault.')
@@ -67,6 +89,7 @@ export async function listGroupVaultItems(groupId: string): Promise<VaultItem[]>
       durationSeconds: Number(r.duration || 0),
       thumbUrl: thumbPath ? thumbs.get(thumbPath) || null : null,
       mediaPath: String(r.video_path || ''),
+      tabId: r.tab_id ? String(r.tab_id) : null,
       createdAt: r.created_at ? new Date(String(r.created_at)).getTime() : Date.now()
     }
   })

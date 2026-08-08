@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   listGroupVaultItems,
+  listGroupVaultTabs,
   listMyGroups,
   signVaultItemUrl,
   type VaultGroup,
-  type VaultItem
+  type VaultItem,
+  type VaultTab
 } from '../lib/vaults'
 import { saveScript } from '../lib/scripts'
 import type { ScriptAccountRef, ScriptEntry } from '../lib/types'
@@ -108,6 +110,9 @@ export default function ScriptCreatorScreen(props: {
   const [groups, setGroups] = useState<VaultGroup[] | null>(null)
   const [groupId, setGroupId] = useState('')
   const [items, setItems] = useState<VaultItem[] | null>(null)
+  const [tabs, setTabs] = useState<VaultTab[]>([])
+  // '' = All, 'unsorted' = items filed into no tab, else a tab id.
+  const [activeTab, setActiveTab] = useState('')
   const [itemsLoading, setItemsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [slots, setSlots] = useState<CreatorSlot[]>([])
@@ -120,8 +125,17 @@ export default function ScriptCreatorScreen(props: {
   const [firstOffsetMs, setFirstOffsetMs] = useState(10 * MIN_MS)
   const [gapMs, setGapMs] = useState(HOUR_MS)
 
-  const videos = useMemo(() => (items || []).filter((i) => i.kind === 'video'), [items])
-  const images = useMemo(() => (items || []).filter((i) => i.kind === 'image'), [items])
+  // The active tab filters BOTH grids: videos while browsing and images while
+  // picking a thumbnail.
+  const inTab = useMemo(() => {
+    const list = items || []
+    if (!activeTab) return list
+    if (activeTab === 'unsorted') return list.filter((i) => !i.tabId)
+    return list.filter((i) => i.tabId === activeTab)
+  }, [items, activeTab])
+  const videos = useMemo(() => inTab.filter((i) => i.kind === 'video'), [inTab])
+  const images = useMemo(() => inTab.filter((i) => i.kind === 'image'), [inTab])
+  const hasUnsorted = useMemo(() => (items || []).some((i) => !i.tabId), [items])
 
   useEffect(() => {
     void (async () => {
@@ -141,9 +155,15 @@ export default function ScriptCreatorScreen(props: {
     setItemsLoading(true)
     setError(null)
     try {
-      setItems(await listGroupVaultItems(gid))
+      const [loadedItems, loadedTabs] = await Promise.all([
+        listGroupVaultItems(gid),
+        listGroupVaultTabs(gid).catch(() => [] as VaultTab[])
+      ])
+      setItems(loadedItems)
+      setTabs(loadedTabs)
     } catch (e) {
       setItems(null)
+      setTabs([])
       setError(e instanceof Error ? e.message : 'Could not load that group vault.')
     } finally {
       setItemsLoading(false)
@@ -152,6 +172,8 @@ export default function ScriptCreatorScreen(props: {
 
   useEffect(() => {
     setSidebarMode({ kind: 'videos' })
+    setActiveTab('')
+    setTabs([])
     if (groupId) void loadItems(groupId)
     else setItems(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -443,6 +465,10 @@ export default function ScriptCreatorScreen(props: {
         loaded={items !== null}
         videos={videos}
         images={images}
+        tabs={tabs}
+        activeTab={activeTab}
+        hasUnsorted={hasUnsorted}
+        onTabChange={setActiveTab}
         mode={sidebarMode}
         onAddVideo={addVideo}
         onPickThumb={(slotKey, item) => setSlotThumb(slotKey, item)}
@@ -468,6 +494,11 @@ function VaultSidebar(props: {
   loaded: boolean
   videos: VaultItem[]
   images: VaultItem[]
+  tabs: VaultTab[]
+  /** '' = All, 'unsorted', or a tab id. */
+  activeTab: string
+  hasUnsorted: boolean
+  onTabChange: (tabId: string) => void
   mode: SidebarMode
   onAddVideo: (item: VaultItem) => void
   onPickThumb: (slotKey: string, item: VaultItem) => void
@@ -505,14 +536,19 @@ function VaultSidebar(props: {
   }
 
   // Leaving the videos view (e.g. switching to a thumbnail pick or another
-  // group) also tears the player down.
+  // group) also tears the player down. Same when switching tab sections —
+  // the previewed video may not even be in the new tab.
   useEffect(() => {
-    if (mode.kind !== 'videos' && playing) closePlayer()
+    if (playing) closePlayer()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode.kind])
+  }, [mode.kind, props.activeTab, props.groupId])
 
   const pickingThumb = mode.kind === 'thumb'
   const list = pickingThumb ? props.images : props.videos
+  const activeTabName =
+    props.activeTab === 'unsorted'
+      ? 'Unsorted'
+      : props.tabs.find((t) => t.id === props.activeTab)?.name || ''
 
   return (
     <aside className="w-full shrink-0 lg:sticky lg:top-0 lg:w-80">
@@ -564,6 +600,48 @@ function VaultSidebar(props: {
               {props.loading ? '…' : '↻'}
             </button>
           </div>
+
+          {/* Tab sections — same folders as the desktop group vault */}
+          {props.groupId && (props.tabs.length > 0 || props.hasUnsorted) && (
+            <div className="mt-2 flex items-center gap-1 overflow-x-auto pb-0.5">
+              <button
+                className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                  props.activeTab === ''
+                    ? 'bg-accent/20 text-white'
+                    : 'text-gray-500 hover:bg-white/[0.06] hover:text-gray-200'
+                }`}
+                onClick={() => props.onTabChange('')}
+              >
+                All
+              </button>
+              {props.tabs.map((t) => (
+                <button
+                  key={t.id}
+                  className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                    props.activeTab === t.id
+                      ? 'bg-accent/20 text-white'
+                      : 'text-gray-500 hover:bg-white/[0.06] hover:text-gray-200'
+                  }`}
+                  onClick={() => props.onTabChange(t.id)}
+                  title={t.name}
+                >
+                  {t.name}
+                </button>
+              ))}
+              {props.hasUnsorted && (
+                <button
+                  className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                    props.activeTab === 'unsorted'
+                      ? 'bg-accent/20 text-white'
+                      : 'text-gray-500 hover:bg-white/[0.06] hover:text-gray-200'
+                  }`}
+                  onClick={() => props.onTabChange('unsorted')}
+                >
+                  Unsorted
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         {/* In-sidebar player (videos mode only) */}
@@ -617,8 +695,12 @@ function VaultSidebar(props: {
             ) : list.length === 0 ? (
               <p className="py-8 text-center text-xs text-gray-600">
                 {pickingThumb
-                  ? 'This vault has no images to use as thumbnails.'
-                  : 'This vault has no videos yet.'}
+                  ? activeTabName
+                    ? `No images in “${activeTabName}” to use as thumbnails.`
+                    : 'This vault has no images to use as thumbnails.'
+                  : activeTabName
+                    ? `No videos in “${activeTabName}” yet.`
+                    : 'This vault has no videos yet.'}
               </p>
             ) : (
               <div className="grid grid-cols-3 gap-1.5">
