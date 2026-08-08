@@ -14,3 +14,29 @@ export async function listScripts(userId: string): Promise<ScriptEntry[]> {
   if (error) throw new Error(error.message || 'Could not load your scripts.')
   return ((data as Array<Record<string, unknown>>) || []).map(scriptRowToEntry)
 }
+
+/** Rename a script — the desktop app treats the cloud as source of truth, so
+ *  the new name shows up there too. */
+export async function renameScript(id: string, name: string): Promise<void> {
+  const clean = name.trim()
+  if (!clean) throw new Error('The script name cannot be empty.')
+  const { error } = await supabase
+    .from('scripts')
+    .update({ name: clean, updated_at: new Date().toISOString() })
+    .eq('id', id)
+  if (error) throw new Error(error.message || 'Could not rename the script.')
+}
+
+/** Save a script built in the PWA's Script Creator to the cloud. */
+export async function saveScript(userId: string, entry: ScriptEntry): Promise<void> {
+  const { error } = await supabase.from('scripts').insert({
+    id: entry.id,
+    user_id: userId,
+    name: entry.name,
+    actions: entry.actions,
+    accounts: { list: entry.accounts, replacements: entry.replacements },
+    created_at: new Date(entry.createdAt).toISOString(),
+    updated_at: new Date().toISOString()
+  })
+  if (error) throw new Error(error.message || 'Could not save the script.')
+}

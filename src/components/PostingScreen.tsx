@@ -15,6 +15,7 @@ import {
   type ScriptEntry,
   type StackedRunItem
 } from '../lib/types'
+import { recordRun, updateRun } from '../lib/history'
 
 // Posting — load a Script, multi-select Instagram accounts to apply it to,
 // then enqueue one stacked run per account on the engine (never parallel).
@@ -189,9 +190,24 @@ export default function PostingScreen(props: {
 
       if (targets.length === 0) {
         // No multi-select — run once with the script's saved replacements.
-        setSingleResult(
-          await runScriptOnEngine(props.userId, script, script.replacements || {})
-        )
+        // History: the run targets the replacements (or the recorded accounts).
+        const names = [
+          ...new Set(
+            [...Object.values(script.replacements || {}), ...script.accounts]
+              .map((r) => (r.username ? `@${r.username.replace(/^@+/, '')}` : ''))
+              .filter(Boolean)
+          )
+        ]
+        const runId = await recordRun(props.userId, script, names)
+        void updateRun(runId, 'running')
+        try {
+          const result = await runScriptOnEngine(props.userId, script, script.replacements || {})
+          setSingleResult(result)
+          void updateRun(runId, result.ok ? 'done' : 'error', result.errors[0]?.error)
+        } catch (e) {
+          void updateRun(runId, 'error', e instanceof Error ? e.message : 'Run failed.')
+          throw e
+        }
         return
       }
 
@@ -205,12 +221,18 @@ export default function PostingScreen(props: {
       }))
       setStack(items)
 
+      // History: one row per stacked run (best-effort — never blocks posting).
+      const runIds = await Promise.all(
+        targets.map((t) => recordRun(props.userId, script, [igLabel(t)]))
+      )
+
       const commandIds = await enqueueScriptStack(props.userId, script, runs)
 
       for (let i = 0; i < commandIds.length; i++) {
         setStack((prev) =>
           prev.map((item, idx) => (idx === i ? { ...item, status: 'running' } : item))
         )
+        void updateRun(runIds[i], 'running')
         try {
           const result = await waitForEngineCommand(commandIds[i])
           setStack((prev) =>
@@ -218,11 +240,13 @@ export default function PostingScreen(props: {
               idx === i ? { ...item, status: result.ok ? 'done' : 'error', result, error: result.ok ? undefined : result.errors[0]?.error } : item
             )
           )
+          void updateRun(runIds[i], result.ok ? 'done' : 'error', result.errors[0]?.error)
         } catch (e) {
           const msg = e instanceof Error ? e.message : 'Run failed.'
           setStack((prev) =>
             prev.map((item, idx) => (idx === i ? { ...item, status: 'error', error: msg } : item))
           )
+          void updateRun(runIds[i], 'error', msg)
         }
       }
     } catch (e) {

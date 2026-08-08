@@ -11,8 +11,10 @@ import { supabase } from '../lib/supabase'
 import type { ScriptEntry } from '../lib/types'
 import PostingScreen from './PostingScreen'
 import ScriptsScreen from './ScriptsScreen'
+import ScriptCreatorScreen from './ScriptCreatorScreen'
+import HistoryScreen from './HistoryScreen'
 
-type View = 'cards' | 'posting' | 'scripts'
+type View = 'cards' | 'posting' | 'scripts' | 'creator' | 'history'
 
 // Remember which section is open across browser refreshes.
 const VIEW_KEY = 'f3.view'
@@ -20,7 +22,7 @@ const VIEW_KEY = 'f3.view'
 function loadSavedView(): View {
   try {
     const v = localStorage.getItem(VIEW_KEY)
-    return v === 'posting' || v === 'scripts' ? v : 'cards'
+    return v === 'posting' || v === 'scripts' || v === 'creator' || v === 'history' ? v : 'cards'
   } catch {
     return 'cards'
   }
@@ -158,6 +160,22 @@ export default function HomeScreen(props: {
           >
             Scripts
           </button>
+          <button
+            className={`rounded-xl px-3 py-2.5 text-left text-sm transition-colors ${
+              view === 'creator' ? 'bg-accent/15 text-white' : 'text-gray-400 hover:bg-white/[0.05] hover:text-gray-100'
+            }`}
+            onClick={() => setView('creator')}
+          >
+            Script Creator
+          </button>
+          <button
+            className={`rounded-xl px-3 py-2.5 text-left text-sm transition-colors ${
+              view === 'history' ? 'bg-accent/15 text-white' : 'text-gray-400 hover:bg-white/[0.05] hover:text-gray-100'
+            }`}
+            onClick={() => setView('history')}
+          >
+            History
+          </button>
         </nav>
 
         {/* Engine status */}
@@ -263,6 +281,10 @@ export default function HomeScreen(props: {
               setView('posting')
             }}
           />
+        ) : view === 'creator' ? (
+          <ScriptCreatorScreen userId={props.userId} onSaved={() => setView('scripts')} />
+        ) : view === 'history' ? (
+          <HistoryScreen userId={props.userId} />
         ) : (
           <PostingScreen
             key={pickedScript?.id || 'default'}

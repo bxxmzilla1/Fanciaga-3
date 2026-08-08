@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { listScripts } from '../lib/scripts'
+import { listScripts, renameScript } from '../lib/scripts'
 import { loadScriptPreview, saveScriptSchedule, signMediaUrl, type PreviewVideo } from '../lib/preview'
 import type { ScriptAccountRef, ScriptEntry } from '../lib/types'
 
@@ -41,6 +41,30 @@ export default function ScriptsScreen(props: {
   const [expanded, setExpanded] = useState<string | null>(null)
   // Script whose posting order is open in the right Preview sidebar.
   const [previewing, setPreviewing] = useState<ScriptEntry | null>(null)
+  // Inline rename: which script is being renamed + the draft name.
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [renameBusy, setRenameBusy] = useState(false)
+
+  async function commitRename(s: ScriptEntry): Promise<void> {
+    const clean = renameValue.trim()
+    if (renameBusy) return
+    if (!clean || clean === s.name) {
+      setRenamingId(null)
+      return
+    }
+    setRenameBusy(true)
+    setError(null)
+    try {
+      await renameScript(s.id, clean)
+      setScripts((prev) => (prev || []).map((x) => (x.id === s.id ? { ...x, name: clean } : x)))
+      setRenamingId(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not rename the script.')
+    } finally {
+      setRenameBusy(false)
+    }
+  }
 
   async function load(): Promise<void> {
     setLoading(true)
@@ -101,21 +125,66 @@ export default function ScriptsScreen(props: {
             const open = expanded === s.id
             return (
               <div key={s.id} className="rounded-2xl border border-white/10 bg-white/[0.03]">
-                <button
-                  className="flex w-full items-center gap-3 px-4 py-3 text-left"
-                  onClick={() => setExpanded(open ? null : s.id)}
+                <div
+                  className="flex w-full cursor-pointer items-center gap-3 px-4 py-3 text-left"
+                  onClick={() => {
+                    if (renamingId !== s.id) setExpanded(open ? null : s.id)
+                  }}
                 >
                   <span className="text-lg">📜</span>
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-semibold text-gray-100">{s.name}</div>
+                    {renamingId === s.id ? (
+                      <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          className="min-w-0 flex-1 rounded-lg border border-accent/50 bg-panel2 px-2 py-1 text-sm text-gray-100 outline-none"
+                          value={renameValue}
+                          autoFocus
+                          disabled={renameBusy}
+                          onChange={(e) => setRenameValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') void commitRename(s)
+                            if (e.key === 'Escape') setRenamingId(null)
+                          }}
+                        />
+                        <button
+                          className="shrink-0 rounded-lg bg-accent/20 px-2 py-1 text-[11px] font-medium text-accent hover:bg-accent/30 disabled:opacity-50"
+                          disabled={renameBusy}
+                          onClick={() => void commitRename(s)}
+                        >
+                          {renameBusy ? 'Saving…' : 'Save'}
+                        </button>
+                        <button
+                          className="shrink-0 rounded-lg px-2 py-1 text-[11px] text-gray-500 hover:text-gray-200"
+                          disabled={renameBusy}
+                          onClick={() => setRenamingId(null)}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="truncate text-sm font-semibold text-gray-100">{s.name}</div>
+                    )}
                     <div className="mt-0.5 text-[11px] text-gray-500">
                       {s.actions.length} action{s.actions.length === 1 ? '' : 's'} ·{' '}
                       {s.accounts.length} account{s.accounts.length === 1 ? '' : 's'} ·{' '}
                       {new Date(s.createdAt).toLocaleString()}
                     </div>
                   </div>
+                  {renamingId !== s.id && (
+                    <button
+                      className="shrink-0 rounded-lg p-1.5 text-gray-600 transition-colors hover:bg-white/10 hover:text-gray-200"
+                      title="Rename this script"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setRenamingId(s.id)
+                        setRenameValue(s.name)
+                      }}
+                    >
+                      ✏️
+                    </button>
+                  )}
                   <span className="shrink-0 text-xs text-gray-600">{open ? '▲' : '▼'}</span>
-                </button>
+                </div>
 
                 {open && (
                   <div className="border-t border-white/[0.06] px-4 py-3">
