@@ -30,8 +30,8 @@ const TEMPLATE_REF: ScriptAccountRef = {
 interface CreatorSlot {
   key: string
   item: VaultItem
-  /** Epoch ms this slot posts. */
-  at: number
+  /** How long AFTER the script runs this slot posts (ms). */
+  offsetMs: number
   /** Optional image merged as a 0.5s intro before the video. */
   thumb: VaultItem | null
 }
@@ -39,15 +39,58 @@ interface CreatorSlot {
 /** What the right sidebar is showing: the videos, or a thumbnail pick. */
 type SidebarMode = { kind: 'videos' } | { kind: 'thumb'; slotKey: string; slotNumber: number }
 
-function toLocalInput(ms: number): string {
-  const d = new Date(ms)
-  const pad = (n: number): string => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+// All times in the creator are RELATIVE (days + hours + minutes after the run
+// starts) — no dates to pick. When the engine runs the script it anchors the
+// whole batch at that moment, keeping every gap exactly as entered.
+
+const DAY_MS = 24 * 60 * 60_000
+const HOUR_MS = 60 * 60_000
+const MIN_MS = 60_000
+
+function msToDur(ms: number): { d: number; h: number; m: number } {
+  const t = Math.max(0, Math.round(ms / MIN_MS) * MIN_MS)
+  const d = Math.floor(t / DAY_MS)
+  const h = Math.floor((t % DAY_MS) / HOUR_MS)
+  const m = Math.round((t % HOUR_MS) / MIN_MS)
+  return { d, h, m }
 }
 
-function fromLocalInput(v: string): number | null {
-  const t = new Date(v).getTime()
-  return Number.isFinite(t) ? t : null
+function fmtOffset(ms: number): string {
+  if (ms <= 0) return 'at run time'
+  const { d, h, m } = msToDur(ms)
+  const parts: string[] = []
+  if (d) parts.push(`${d}d`)
+  if (h) parts.push(`${h}h`)
+  if (m) parts.push(`${m}m`)
+  return `+${parts.join(' ') || '0m'} after run`
+}
+
+/** Three little number boxes — days, hours, minutes — bound to a ms value. */
+function DurInputs(props: {
+  valueMs: number
+  onChange: (ms: number) => void
+  compact?: boolean
+}): JSX.Element {
+  const dur = msToDur(props.valueMs)
+  const box = props.compact
+    ? 'w-11 rounded-lg border border-white/10 bg-panel2 px-1 py-1 text-center text-[11px] text-gray-100 outline-none focus:border-accent/60 [color-scheme:dark]'
+    : 'w-14 rounded-xl border border-white/10 bg-panel2 px-1.5 py-1.5 text-center text-xs text-gray-100 outline-none focus:border-accent/60 [color-scheme:dark]'
+  const label = props.compact ? 'text-[9px] text-gray-600' : 'text-[10px] text-gray-500'
+  const set = (part: 'd' | 'h' | 'm', raw: string): void => {
+    const n = Math.max(0, Math.round(Number(raw) || 0))
+    const next = { ...dur, [part]: part === 'd' ? Math.min(n, 365) : Math.min(n, part === 'h' ? 23 : 59) }
+    props.onChange(next.d * DAY_MS + next.h * HOUR_MS + next.m * MIN_MS)
+  }
+  return (
+    <span className="inline-flex items-center gap-1">
+      <input type="number" min={0} max={365} className={box} value={dur.d} onChange={(e) => set('d', e.target.value)} />
+      <span className={label}>d</span>
+      <input type="number" min={0} max={23} className={box} value={dur.h} onChange={(e) => set('h', e.target.value)} />
+      <span className={label}>h</span>
+      <input type="number" min={0} max={59} className={box} value={dur.m} onChange={(e) => set('m', e.target.value)} />
+      <span className={label}>m</span>
+    </span>
+  )
 }
 
 function fmtDuration(s: number): string {
@@ -72,9 +115,10 @@ export default function ScriptCreatorScreen(props: {
   const [savedMsg, setSavedMsg] = useState('')
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>({ kind: 'videos' })
 
-  // Schedule helper: first post time + gap, applied over the whole sequence.
-  const [firstAt, setFirstAt] = useState(() => toLocalInput(Date.now() + 10 * 60_000))
-  const [gapMinutes, setGapMinutes] = useState(60)
+  // Schedule helper: delay before the first post + gap between posts, both as
+  // days/hours/minutes AFTER the script runs.
+  const [firstOffsetMs, setFirstOffsetMs] = useState(10 * MIN_MS)
+  const [gapMs, setGapMs] = useState(HOUR_MS)
 
   const videos = useMemo(() => (items || []).filter((i) => i.kind === 'video'), [items])
   const images = useMemo(() => (items || []).filter((i) => i.kind === 'image'), [items])
@@ -113,16 +157,16 @@ export default function ScriptCreatorScreen(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupId])
 
-  function nextSlotTime(): number {
-    if (slots.length === 0) return fromLocalInput(firstAt) ?? Date.now() + 10 * 60_000
-    return slots[slots.length - 1].at + gapMinutes * 60_000
+  function nextSlotOffset(): number {
+    if (slots.length === 0) return firstOffsetMs
+    return slots[slots.length - 1].offsetMs + Math.max(MIN_MS, gapMs)
   }
 
   function addVideo(item: VaultItem): void {
     setSavedMsg('')
     setSlots((prev) => [
       ...prev,
-      { key: crypto.randomUUID(), item, at: nextSlotTime(), thumb: null }
+      { key: crypto.randomUUID(), item, offsetMs: nextSlotOffset(), thumb: null }
     ])
   }
 
@@ -148,13 +192,9 @@ export default function ScriptCreatorScreen(props: {
   }
 
   function applySchedule(): void {
-    const start = fromLocalInput(firstAt)
-    if (start == null) {
-      setError('Set a valid date and time for the first post.')
-      return
-    }
     setError(null)
-    setSlots((prev) => prev.map((s, i) => ({ ...s, at: start + i * gapMinutes * 60_000 })))
+    const gap = Math.max(MIN_MS, gapMs)
+    setSlots((prev) => prev.map((s, i) => ({ ...s, offsetMs: firstOffsetMs + i * gap })))
   }
 
   async function save(): Promise<void> {
@@ -170,8 +210,12 @@ export default function ScriptCreatorScreen(props: {
     setSaving(true)
     setError(null)
     try {
-      // Slots post in chronological order — same shape the desktop Striker logs.
-      const ordered = [...slots].sort((a, b) => a.at - b.at)
+      // Slots post in offset order — same shape the desktop Striker logs. The
+      // offsets are stored as absolute times anchored at save; the engine
+      // re-anchors the whole batch when the script actually runs, so only the
+      // days/hours/minutes gaps entered here matter.
+      const base = Date.now()
+      const ordered = [...slots].sort((a, b) => a.offsetMs - b.offsetMs)
       const strikerSlots = ordered.map((s, i) => ({
         accountId: TEMPLATE_REF.accountId,
         keyId: TEMPLATE_REF.keyId,
@@ -179,7 +223,7 @@ export default function ScriptCreatorScreen(props: {
         source: 'group' as const,
         groupId: s.item.groupId,
         itemId: s.item.id,
-        scheduledFor: new Date(s.at).toISOString(),
+        scheduledFor: new Date(base + s.offsetMs).toISOString(),
         ...(s.thumb
           ? { thumbnail: { source: 'group' as const, groupId: s.thumb.groupId, itemId: s.thumb.id } }
           : {})
@@ -268,32 +312,20 @@ export default function ScriptCreatorScreen(props: {
                 {slots.length > 0 && <span className="text-gray-500">({slots.length})</span>}
               </div>
               <p className="mt-0.5 text-xs text-gray-500">
-                Each video posts at its time. Pick an optional thumbnail image per post.
+                Times are days/hours/minutes after the script runs. Pick an optional thumbnail
+                image per post.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <label className="text-[11px] text-gray-500">First post</label>
-              <input
-                type="datetime-local"
-                className="rounded-xl border border-white/10 bg-panel2 px-2 py-1.5 text-xs text-gray-100 outline-none [color-scheme:dark]"
-                value={firstAt}
-                onChange={(e) => setFirstAt(e.target.value)}
-              />
-              <label className="text-[11px] text-gray-500">every</label>
-              <input
-                type="number"
-                min={1}
-                max={10080}
-                className="w-16 rounded-xl border border-white/10 bg-panel2 px-2 py-1.5 text-center text-xs text-gray-100 outline-none [color-scheme:dark]"
-                value={gapMinutes}
-                onChange={(e) => setGapMinutes(Math.max(1, Math.round(Number(e.target.value) || 1)))}
-              />
-              <label className="text-[11px] text-gray-500">min</label>
+              <label className="text-[11px] text-gray-500">First post after</label>
+              <DurInputs valueMs={firstOffsetMs} onChange={setFirstOffsetMs} />
+              <label className="text-[11px] text-gray-500">then every</label>
+              <DurInputs valueMs={gapMs} onChange={setGapMs} />
               <button
                 className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-gray-300 hover:bg-white/[0.05] disabled:opacity-50"
                 disabled={slots.length === 0}
                 onClick={applySchedule}
-                title="Re-space every post from the first time using the interval"
+                title="Re-space every post: first after the delay, then one per interval"
               >
                 Apply times
               </button>
@@ -325,19 +357,16 @@ export default function ScriptCreatorScreen(props: {
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-xs font-medium text-gray-200">{s.item.title}</div>
                     <div className="mt-1 flex flex-wrap items-center gap-2">
-                      <input
-                        type="datetime-local"
-                        className="rounded-lg border border-white/10 bg-panel2 px-2 py-1 text-[11px] text-gray-100 outline-none [color-scheme:dark]"
-                        value={toLocalInput(s.at)}
-                        onChange={(e) => {
-                          const t = fromLocalInput(e.target.value)
-                          if (t != null) {
-                            setSlots((prev) =>
-                              prev.map((x) => (x.key === s.key ? { ...x, at: t } : x))
-                            )
-                          }
-                        }}
+                      <DurInputs
+                        compact
+                        valueMs={s.offsetMs}
+                        onChange={(ms) =>
+                          setSlots((prev) =>
+                            prev.map((x) => (x.key === s.key ? { ...x, offsetMs: ms } : x))
+                          )
+                        }
                       />
+                      <span className="text-[10px] text-gray-600">{fmtOffset(s.offsetMs)}</span>
                       {/* Thumbnail pick — opens the image grid in the right sidebar */}
                       <button
                         className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] transition-colors ${
