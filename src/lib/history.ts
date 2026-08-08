@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { cancelPendingCommand, forceStopEngine } from './engine'
 import type { ScriptEntry } from './types'
 
 // Run history — one `script_runs` row per script run started from Posting
@@ -15,6 +16,8 @@ export interface ScriptRun {
   accounts: string[]
   status: RunStatus
   error: string
+  /** The engine_commands row backing this run ('' on older rows). */
+  commandId: string
   createdAt: number
   doneAt: number | null
 }
@@ -41,6 +44,16 @@ export async function recordRun(
     return String(data.id)
   } catch {
     return null
+  }
+}
+
+/** Link a run to its engine command so History's Force Stop can target it. */
+export async function setRunCommand(id: string | null, commandId: string): Promise<void> {
+  if (!id || !commandId) return
+  try {
+    await supabase.from('script_runs').update({ command_id: commandId }).eq('id', id)
+  } catch {
+    // column not migrated yet — Force Stop falls back to "stop everything"
   }
 }
 
@@ -89,7 +102,25 @@ export async function listRuns(userId: string): Promise<ScriptRun[]> {
       ? String(r.status)
       : 'queued') as RunStatus,
     error: String(r.error ?? ''),
+    commandId: String(r.command_id ?? ''),
     createdAt: r.created_at ? new Date(String(r.created_at)).getTime() : Date.now(),
     doneAt: r.done_at ? new Date(String(r.done_at)).getTime() : null
   }))
+}
+
+/**
+ * Force-stop a queued or running run. Fast path: cancel the engine command
+ * while it's still pending (never reaches the engine). Otherwise the engine
+ * is told to abort it (or, for older rows without a command id, to stop
+ * everything this account has queued/running).
+ */
+export async function forceStopRun(userId: string, run: ScriptRun): Promise<void> {
+  let stopped = false
+  if (run.commandId) {
+    stopped = await cancelPendingCommand(run.commandId).catch(() => false)
+  }
+  if (!stopped) {
+    await forceStopEngine(userId, run.commandId || undefined)
+  }
+  await updateRun(run.id, 'error', 'Force stopped.')
 }

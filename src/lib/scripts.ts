@@ -17,6 +17,12 @@ export async function listScripts(userId: string): Promise<ScriptEntry[]> {
 
 /** Rename a script — the desktop app treats the cloud as source of truth, so
  *  the new name shows up there too. */
+/** Permanently delete a script (it disappears from the desktop app too). */
+export async function deleteScript(id: string): Promise<void> {
+  const { error } = await supabase.from('scripts').delete().eq('id', id)
+  if (error) throw new Error(error.message || 'Could not delete the script.')
+}
+
 export async function renameScript(id: string, name: string): Promise<void> {
   const clean = name.trim()
   if (!clean) throw new Error('The script name cannot be empty.')

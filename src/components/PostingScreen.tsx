@@ -15,7 +15,7 @@ import {
   type ScriptEntry,
   type StackedRunItem
 } from '../lib/types'
-import { recordRun, updateRun } from '../lib/history'
+import { recordRun, setRunCommand, updateRun } from '../lib/history'
 import { CheckIcon, CloseIcon, ScriptIcon } from './Icons'
 
 // Posting — load a Script, multi-select Instagram accounts to apply it to,
@@ -202,7 +202,9 @@ export default function PostingScreen(props: {
         const runId = await recordRun(props.userId, script, names)
         void updateRun(runId, 'running')
         try {
-          const result = await runScriptOnEngine(props.userId, script, script.replacements || {})
+          const result = await runScriptOnEngine(props.userId, script, script.replacements || {}, (cid) =>
+            void setRunCommand(runId, cid)
+          )
           setSingleResult(result)
           void updateRun(runId, result.ok ? 'done' : 'error', result.errors[0]?.error)
         } catch (e) {
@@ -228,6 +230,8 @@ export default function PostingScreen(props: {
       )
 
       const commandIds = await enqueueScriptStack(props.userId, script, runs)
+      // Link each history row to its engine command so Force Stop can target it.
+      commandIds.forEach((cid, i) => void setRunCommand(runIds[i], cid))
 
       for (let i = 0; i < commandIds.length; i++) {
         setStack((prev) =>

@@ -144,15 +144,45 @@ export async function listEngineAccounts(userId: string, labelId?: string): Prom
 export async function runScriptOnEngine(
   userId: string,
   script: ScriptEntry,
-  replacements: Record<string, ScriptAccountRef>
+  replacements: Record<string, ScriptAccountRef>,
+  onCommandId?: (commandId: string) => void
 ): Promise<RunScriptResult> {
   const id = await sendCommand(userId, 'run_script', { script, replacements })
+  onCommandId?.(id)
   const res = await waitForCommand(id, 10 * 60_000)
   return {
     ok: !!res.ok,
     started: Array.isArray(res.started) ? (res.started as RunScriptResult['started']) : [],
     errors: Array.isArray(res.errors) ? (res.errors as RunScriptResult['errors']) : []
   }
+}
+
+/**
+ * Cancel a command the engine hasn't claimed yet (still "pending"). Returns
+ * true when the cancel landed — the engine will never run it.
+ */
+export async function cancelPendingCommand(commandId: string): Promise<boolean> {
+  const { data } = await supabase
+    .from('engine_commands')
+    .update({
+      status: 'error',
+      result: { error: 'Force stopped from Fanciaga 3.' },
+      done_at: new Date().toISOString()
+    })
+    .eq('id', commandId)
+    .eq('status', 'pending')
+    .select('id')
+  return !!data?.length
+}
+
+/**
+ * Tell the engine to force-stop. With a commandId only that queued/running
+ * run stops; without one, everything this account has on the engine stops.
+ */
+export async function forceStopEngine(userId: string, commandId?: string): Promise<void> {
+  const id = await sendCommand(userId, 'force_stop', commandId ? { commandId } : {})
+  // Best-effort: the stop is latched engine-side even if this wait times out.
+  await waitForCommand(id, 30_000).catch(() => {})
 }
 
 /**

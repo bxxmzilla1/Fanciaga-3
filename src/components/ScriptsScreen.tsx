@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { listScripts, renameScript } from '../lib/scripts'
+import { deleteScript, listScripts, renameScript } from '../lib/scripts'
 import { loadScriptPreview, saveScriptSchedule, signMediaUrl, type PreviewVideo } from '../lib/preview'
 import type { ScriptAccountRef, ScriptEntry } from '../lib/types'
 import {
@@ -10,7 +10,8 @@ import {
   PencilIcon,
   PlayIcon,
   ScriptIcon,
-  StopIcon
+  StopIcon,
+  TrashIcon
 } from './Icons'
 
 // Scripts — every script recorded by the Script Writter in the connected
@@ -55,6 +56,26 @@ export default function ScriptsScreen(props: {
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const [renameBusy, setRenameBusy] = useState(false)
+  // Delete: first tap arms the confirm, second tap deletes.
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
+
+  async function commitDelete(s: ScriptEntry): Promise<void> {
+    if (deleteBusy) return
+    setDeleteBusy(true)
+    setError(null)
+    try {
+      await deleteScript(s.id)
+      setScripts((prev) => (prev || []).filter((x) => x.id !== s.id))
+      setConfirmDeleteId(null)
+      if (expanded === s.id) setExpanded(null)
+      setPreviewing((prev) => (prev?.id === s.id ? null : prev))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not delete the script.')
+    } finally {
+      setDeleteBusy(false)
+    }
+  }
 
   async function commitRename(s: ScriptEntry): Promise<void> {
     const clean = renameValue.trim()
@@ -182,19 +203,52 @@ export default function ScriptsScreen(props: {
                       {new Date(s.createdAt).toLocaleString()}
                     </div>
                   </div>
-                  {renamingId !== s.id && (
-                    <button
-                      className="shrink-0 rounded-lg p-1.5 text-gray-600 transition-colors hover:bg-white/10 hover:text-gray-200"
-                      title="Rename this script"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setRenamingId(s.id)
-                        setRenameValue(s.name)
-                      }}
-                    >
-                      <PencilIcon size={14} />
-                    </button>
-                  )}
+                  {renamingId !== s.id &&
+                    (confirmDeleteId === s.id ? (
+                      <span
+                        className="flex shrink-0 items-center gap-1.5"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <button
+                          className="rounded-lg bg-red-500/15 px-2 py-1 text-[11px] font-semibold text-red-300 hover:bg-red-500/25 disabled:opacity-50"
+                          disabled={deleteBusy}
+                          onClick={() => void commitDelete(s)}
+                        >
+                          {deleteBusy ? 'Deleting…' : 'Delete?'}
+                        </button>
+                        <button
+                          className="rounded-lg px-2 py-1 text-[11px] text-gray-500 hover:text-gray-200"
+                          disabled={deleteBusy}
+                          onClick={() => setConfirmDeleteId(null)}
+                        >
+                          Cancel
+                        </button>
+                      </span>
+                    ) : (
+                      <>
+                        <button
+                          className="shrink-0 rounded-lg p-1.5 text-gray-600 transition-colors hover:bg-white/10 hover:text-gray-200"
+                          title="Rename this script"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setRenamingId(s.id)
+                            setRenameValue(s.name)
+                          }}
+                        >
+                          <PencilIcon size={14} />
+                        </button>
+                        <button
+                          className="shrink-0 rounded-lg p-1.5 text-gray-600 transition-colors hover:bg-red-500/10 hover:text-red-300"
+                          title="Delete this script"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setConfirmDeleteId(s.id)
+                          }}
+                        >
+                          <TrashIcon size={14} />
+                        </button>
+                      </>
+                    ))}
                   <span className="shrink-0 text-gray-600">
                     {open ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}
                   </span>

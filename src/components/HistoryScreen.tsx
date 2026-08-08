@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { listRuns, type ScriptRun } from '../lib/history'
-import { RocketIcon } from './Icons'
+import { forceStopRun, listRuns, type ScriptRun } from '../lib/history'
+import { RocketIcon, StopIcon } from './Icons'
 
 // History — every script run started from the Posting section, with the
 // Instagram accounts each run targeted and how it ended.
@@ -29,6 +29,28 @@ export default function HistoryScreen(props: { userId: string }): JSX.Element {
   const [runs, setRuns] = useState<ScriptRun[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Run id currently being force-stopped (disables its button).
+  const [stoppingId, setStoppingId] = useState<string | null>(null)
+
+  async function forceStop(run: ScriptRun): Promise<void> {
+    if (stoppingId) return
+    setStoppingId(run.id)
+    setError(null)
+    // Show it as stopped right away — the engine confirms in the background.
+    setRuns((prev) =>
+      prev
+        ? prev.map((r) => (r.id === run.id ? { ...r, status: 'error', error: 'Force stopped.' } : r))
+        : prev
+    )
+    try {
+      await forceStopRun(props.userId, run)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not force-stop that run.')
+    } finally {
+      setStoppingId(null)
+      void load(true)
+    }
+  }
 
   async function load(silent = false): Promise<void> {
     if (!silent) setLoading(true)
@@ -104,6 +126,17 @@ export default function HistoryScreen(props: { userId: string }): JSX.Element {
                       {r.doneAt != null && <> · finished {fmt(r.doneAt)}</>}
                     </div>
                   </div>
+                  {(r.status === 'queued' || r.status === 'running') && (
+                    <button
+                      className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-red-500/30 px-2 py-1 text-[11px] font-semibold text-red-300 transition-colors hover:bg-red-500/10 disabled:opacity-50"
+                      disabled={stoppingId === r.id}
+                      onClick={() => void forceStop(r)}
+                      title="Stop this run — a queued run is cancelled before it starts; a running one is aborted on the engine"
+                    >
+                      <StopIcon size={11} />
+                      {stoppingId === r.id ? 'Stopping…' : 'Force Stop'}
+                    </button>
+                  )}
                   <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${meta.cls}`}>
                     {meta.label}
                   </span>

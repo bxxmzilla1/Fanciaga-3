@@ -197,6 +197,15 @@ export function PanelRightIcon(p: IconProps): JSX.Element {
   )
 }
 
+export function TrashIcon(p: IconProps): JSX.Element {
+  return (
+    <svg {...base(p)}>
+      <path d="M4.5 6.5h15M9.5 6.5V5A1.5 1.5 0 0 1 11 3.5h2A1.5 1.5 0 0 1 14.5 5v1.5M6.5 6.5l.8 12A1.5 1.5 0 0 0 8.8 20h6.4a1.5 1.5 0 0 0 1.5-1.4l.8-12.1" />
+      <path d="M10 10.5v6M14 10.5v6" />
+    </svg>
+  )
+}
+
 export function FolderIcon(p: IconProps): JSX.Element {
   return (
     <svg {...base(p)}>
