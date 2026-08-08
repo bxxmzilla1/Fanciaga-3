@@ -17,6 +17,8 @@ export interface VaultItem {
   kind: 'video' | 'image'
   durationSeconds: number
   thumbUrl: string | null
+  /** Storage path of the media — signed on demand when the user presses play. */
+  mediaPath: string
   createdAt: number
 }
 
@@ -39,7 +41,7 @@ export async function listMyGroups(): Promise<VaultGroup[]> {
 export async function listGroupVaultItems(groupId: string): Promise<VaultItem[]> {
   const { data, error } = await supabase
     .from('group_vault_items')
-    .select('id, title, thumb_path, ext, duration, created_at')
+    .select('id, title, video_path, thumb_path, ext, duration, created_at')
     .eq('group_id', groupId)
     .order('created_at', { ascending: false })
   if (error) throw new Error(error.message || 'Could not load that group vault.')
@@ -64,7 +66,23 @@ export async function listGroupVaultItems(groupId: string): Promise<VaultItem[]>
       kind: IMAGE_EXTS.has(ext) ? 'image' : 'video',
       durationSeconds: Number(r.duration || 0),
       thumbUrl: thumbPath ? thumbs.get(thumbPath) || null : null,
+      mediaPath: String(r.video_path || ''),
       createdAt: r.created_at ? new Date(String(r.created_at)).getTime() : Date.now()
     }
   })
+}
+
+/**
+ * Sign the actual media URL — only called when the user presses play, so the
+ * heavy video is never loaded while just browsing the thumbnail grid.
+ */
+export async function signVaultItemUrl(item: VaultItem): Promise<string> {
+  if (!item.mediaPath) throw new Error('This vault item no longer has a cloud copy to play.')
+  const { data, error } = await supabase.storage
+    .from('group-vault')
+    .createSignedUrl(item.mediaPath, 60 * 60)
+  if (error || !data?.signedUrl) {
+    throw new Error(error?.message || 'Could not create the playback link.')
+  }
+  return data.signedUrl
 }
