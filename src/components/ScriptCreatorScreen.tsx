@@ -10,6 +10,17 @@ import {
 } from '../lib/vaults'
 import { saveScript } from '../lib/scripts'
 import type { ScriptAccountRef, ScriptEntry } from '../lib/types'
+import {
+  ChevronDownIcon,
+  ChevronUpIcon,
+  CloseIcon,
+  FilmIcon,
+  FolderIcon,
+  ImageIcon,
+  PanelRightIcon,
+  PlayIcon,
+  RefreshIcon
+} from './Icons'
 
 // Script Creator — the Striker-style builder, right in Fanciaga 3. The group
 // vault lives in a RIGHT SIDEBAR as a three-column thumbnail grid: tap a
@@ -119,11 +130,20 @@ export default function ScriptCreatorScreen(props: {
   const [saving, setSaving] = useState(false)
   const [savedMsg, setSavedMsg] = useState('')
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>({ kind: 'videos' })
+  // Right vault drawer — open by default on desktop, closed on small screens.
+  const [vaultOpen, setVaultOpen] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches
+  )
 
   // Schedule helper: delay before the first post + gap between posts, both as
   // days/hours/minutes AFTER the script runs.
   const [firstOffsetMs, setFirstOffsetMs] = useState(10 * MIN_MS)
   const [gapMs, setGapMs] = useState(HOUR_MS)
+
+  function openVaultMode(mode: SidebarMode): void {
+    setSidebarMode(mode)
+    setVaultOpen(true)
+  }
 
   // The active tab filters BOTH grids: videos while browsing and images while
   // picking a thumbnail.
@@ -279,16 +299,29 @@ export default function ScriptCreatorScreen(props: {
   }
 
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-4 lg:flex-row lg:items-start">
+    <div className="relative mx-auto flex max-w-6xl flex-col gap-4 lg:flex-row lg:items-start">
       {/* ── Left: script being built ─────────────────────────────────────── */}
       <div className="flex min-w-0 flex-1 flex-col gap-4">
-        <div>
-          <h1 className="text-lg font-semibold text-gray-100">Script Creator</h1>
-          <p className="mt-1 text-sm text-gray-500">
-            Build a Striker-style script: add videos from the vault on the right, set the posting
-            times, and save it into Scripts. The accounts you multi-select in Posting replace the
-            template on every run.
-          </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-lg font-semibold text-gray-100">Script Creator</h1>
+            <p className="mt-1 text-sm text-gray-500">
+              Build a Striker-style script from the group vault, set relative posting times, and save
+              it into Scripts. Multi-select accounts in Posting to replace the template on every run.
+            </p>
+          </div>
+          <button
+            type="button"
+            className={`inline-flex shrink-0 items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-medium transition-colors ${
+              vaultOpen
+                ? 'border-accent/40 bg-accent/15 text-accent'
+                : 'border-white/10 text-gray-300 hover:bg-white/[0.05]'
+            }`}
+            onClick={() => setVaultOpen((o) => !o)}
+          >
+            <PanelRightIcon size={14} />
+            {vaultOpen ? 'Hide vault' : 'Show vault'}
+          </button>
         </div>
 
         {error && (
@@ -373,7 +406,9 @@ export default function ScriptCreatorScreen(props: {
                     {s.item.thumbUrl ? (
                       <img src={s.item.thumbUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
                     ) : (
-                      <div className="flex h-full w-full items-center justify-center text-sm">🎬</div>
+                      <div className="flex h-full w-full items-center justify-center text-gray-500">
+                        <FilmIcon size={14} />
+                      </div>
                     )}
                   </div>
                   <div className="min-w-0 flex-1">
@@ -389,7 +424,6 @@ export default function ScriptCreatorScreen(props: {
                         }
                       />
                       <span className="text-[10px] text-gray-600">{fmtOffset(s.offsetMs)}</span>
-                      {/* Thumbnail pick — opens the image grid in the right sidebar */}
                       <button
                         className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] transition-colors ${
                           sidebarMode.kind === 'thumb' && sidebarMode.slotKey === s.key
@@ -397,7 +431,7 @@ export default function ScriptCreatorScreen(props: {
                             : 'border-white/10 text-gray-300 hover:bg-white/[0.05]'
                         }`}
                         onClick={() =>
-                          setSidebarMode({ kind: 'thumb', slotKey: s.key, slotNumber: i + 1 })
+                          openVaultMode({ kind: 'thumb', slotKey: s.key, slotNumber: i + 1 })
                         }
                         title="Pick a thumbnail image from the vault (0.5s intro before the video)"
                       >
@@ -409,36 +443,39 @@ export default function ScriptCreatorScreen(props: {
                             <span className="max-w-24 truncate">{s.thumb.title}</span>
                           </>
                         ) : (
-                          <span>🖼 Thumbnail…</span>
+                          <>
+                            <ImageIcon size={12} />
+                            <span>Thumbnail…</span>
+                          </>
                         )}
                       </button>
                       {s.thumb && (
                         <button
-                          className="rounded-lg px-1.5 py-1 text-[11px] text-gray-600 hover:text-red-300"
+                          className="rounded-lg p-1 text-gray-600 hover:text-red-300"
                           onClick={() => setSlotThumb(s.key, null)}
                           title="Remove the thumbnail"
                         >
-                          ✕
+                          <CloseIcon size={12} />
                         </button>
                       )}
                     </div>
                   </div>
                   <div className="flex shrink-0 flex-col gap-0.5">
                     <button
-                      className="rounded px-1 text-xs text-gray-500 hover:bg-white/10 hover:text-gray-200 disabled:opacity-30"
+                      className="rounded p-1 text-gray-500 hover:bg-white/10 hover:text-gray-200 disabled:opacity-30"
                       disabled={i === 0}
                       onClick={() => moveSlot(s.key, -1)}
                       title="Move up"
                     >
-                      ▲
+                      <ChevronUpIcon size={14} />
                     </button>
                     <button
-                      className="rounded px-1 text-xs text-gray-500 hover:bg-white/10 hover:text-gray-200 disabled:opacity-30"
+                      className="rounded p-1 text-gray-500 hover:bg-white/10 hover:text-gray-200 disabled:opacity-30"
                       disabled={i === slots.length - 1}
                       onClick={() => moveSlot(s.key, 1)}
                       title="Move down"
                     >
-                      ▼
+                      <ChevronDownIcon size={14} />
                     </button>
                   </div>
                   <button
@@ -446,7 +483,7 @@ export default function ScriptCreatorScreen(props: {
                     onClick={() => removeSlot(s.key)}
                     title="Remove this post"
                   >
-                    ✕
+                    <CloseIcon size={14} />
                   </button>
                 </div>
               ))}
@@ -455,8 +492,18 @@ export default function ScriptCreatorScreen(props: {
         </div>
       </div>
 
-      {/* ── Right sidebar: the group vault ───────────────────────────────── */}
+      {/* ── Right sidebar: the group vault (drawer on mobile) ───────────── */}
+      {vaultOpen && (
+        <button
+          type="button"
+          aria-label="Close vault"
+          className="fixed inset-0 z-40 bg-black/55 lg:hidden"
+          onClick={() => setVaultOpen(false)}
+        />
+      )}
       <VaultSidebar
+        open={vaultOpen}
+        onClose={() => setVaultOpen(false)}
         groups={groups}
         groupId={groupId}
         onGroupChange={setGroupId}
@@ -486,6 +533,8 @@ export default function ScriptCreatorScreen(props: {
  * for the chosen post.
  */
 function VaultSidebar(props: {
+  open: boolean
+  onClose: () => void
   groups: VaultGroup[] | null
   groupId: string
   onGroupChange: (id: string) => void
@@ -551,8 +600,12 @@ function VaultSidebar(props: {
       : props.tabs.find((t) => t.id === props.activeTab)?.name || ''
 
   return (
-    <aside className="w-full shrink-0 lg:sticky lg:top-0 lg:w-80">
-      <div className="flex max-h-[80vh] flex-col rounded-2xl border border-white/10 bg-white/[0.03] lg:max-h-[calc(100vh-6rem)]">
+    <aside
+      className={`fixed inset-y-0 right-0 z-50 flex w-[min(22rem,92vw)] flex-col border-l border-white/10 bg-panel shadow-2xl transition-transform duration-200 lg:static lg:z-0 lg:w-80 lg:shrink-0 lg:border-0 lg:bg-transparent lg:shadow-none ${
+        props.open ? 'translate-x-0' : 'translate-x-full lg:hidden'
+      }`}
+    >
+      <div className="flex h-full max-h-none flex-col rounded-none border-0 bg-panel lg:max-h-[calc(100vh-6rem)] lg:sticky lg:top-0 lg:rounded-2xl lg:border lg:border-white/10 lg:bg-white/[0.03]">
         {/* Header */}
         <div className="shrink-0 border-b border-white/[0.06] p-3">
           {pickingThumb ? (
@@ -571,7 +624,21 @@ function VaultSidebar(props: {
               </button>
             </div>
           ) : (
-            <div className="text-sm font-semibold text-gray-100">Group vault</div>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-sm font-semibold text-gray-100">
+                <FolderIcon size={15} />
+                Group vault
+              </div>
+              <button
+                type="button"
+                className="rounded-lg p-1.5 text-gray-400 hover:bg-white/[0.06] hover:text-white"
+                onClick={props.onClose}
+                aria-label="Hide vault"
+                title="Hide vault"
+              >
+                <CloseIcon size={16} />
+              </button>
+            </div>
           )}
           <div className="mt-2 flex items-center gap-2">
             <select
@@ -593,11 +660,12 @@ function VaultSidebar(props: {
               ))}
             </select>
             <button
-              className="shrink-0 rounded-xl border border-white/10 px-2.5 py-1.5 text-xs text-gray-300 hover:bg-white/[0.05] disabled:opacity-50"
+              className="shrink-0 rounded-xl border border-white/10 p-2 text-gray-300 hover:bg-white/[0.05] disabled:opacity-50"
               disabled={!props.groupId || props.loading}
               onClick={props.onRefresh}
+              aria-label="Refresh vault"
             >
-              {props.loading ? '…' : '↻'}
+              <RefreshIcon size={14} className={props.loading ? 'animate-spin' : undefined} />
             </button>
           </div>
 
@@ -650,11 +718,12 @@ function VaultSidebar(props: {
             <div className="mb-2 flex items-center justify-between gap-2">
               <div className="min-w-0 truncate text-xs font-medium text-gray-200">{playing.title}</div>
               <button
-                className="shrink-0 rounded-lg border border-white/10 px-2 py-1 text-[11px] text-gray-300 hover:bg-white/[0.05]"
+                className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-white/10 px-2 py-1 text-[11px] text-gray-300 hover:bg-white/[0.05]"
                 onClick={closePlayer}
                 title="Exit the video view (unloads the video to keep the site fast)"
               >
-                ✕ Exit video
+                <CloseIcon size={12} />
+                Exit
               </button>
             </div>
             <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-xl bg-black">
@@ -718,8 +787,8 @@ function VaultSidebar(props: {
                         {v.thumbUrl ? (
                           <img src={v.thumbUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
                         ) : (
-                          <div className="flex h-full w-full items-center justify-center text-xl">
-                            {pickingThumb ? '🖼' : '🎬'}
+                          <div className="flex h-full w-full items-center justify-center text-gray-500">
+                            {pickingThumb ? <ImageIcon size={18} /> : <FilmIcon size={18} />}
                           </div>
                         )}
                         {!pickingThumb && v.durationSeconds > 0 && (
@@ -728,8 +797,10 @@ function VaultSidebar(props: {
                           </span>
                         )}
                         {!pickingThumb && (
-                          <span className="absolute inset-0 flex items-center justify-center bg-black/40 text-lg opacity-0 transition-opacity group-hover:opacity-100">
-                            ▶
+                          <span className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
+                            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white/90 text-black">
+                              <PlayIcon size={12} />
+                            </span>
                           </span>
                         )}
                       </div>

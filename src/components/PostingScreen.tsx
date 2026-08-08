@@ -16,6 +16,7 @@ import {
   type StackedRunItem
 } from '../lib/types'
 import { recordRun, updateRun } from '../lib/history'
+import { CheckIcon, CloseIcon, ScriptIcon } from './Icons'
 
 // Posting — load a Script, multi-select Instagram accounts to apply it to,
 // then enqueue one stacked run per account on the engine (never parallel).
@@ -299,7 +300,12 @@ export default function PostingScreen(props: {
         />
         {script ? (
           <>
-            <div className="text-sm font-semibold text-gray-100">📜 {script.name}</div>
+            <div className="flex items-center gap-2 text-sm font-semibold text-gray-100">
+              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent/15 text-accent">
+                <ScriptIcon size={14} />
+              </span>
+              <span className="min-w-0 truncate">{script.name}</span>
+            </div>
             <div className="mt-1 text-xs text-gray-500">
               {script.actions.length} action{script.actions.length === 1 ? '' : 's'} ·{' '}
               {script.accounts.length} recorded account{script.accounts.length === 1 ? '' : 's'} ·{' '}
@@ -519,9 +525,13 @@ export default function PostingScreen(props: {
                 <span className="min-w-0 flex-1 truncate text-gray-200">{item.username}</span>
                 {item.status === 'queued' && <span className="text-gray-500">Queued</span>}
                 {item.status === 'running' && <span className="text-accent">Running…</span>}
-                {item.status === 'done' && <span className="text-emerald-300">Done ✓</span>}
+                {item.status === 'done' && (
+                  <span className="inline-flex items-center gap-1 text-emerald-300">
+                    <CheckIcon size={12} /> Done
+                  </span>
+                )}
                 {item.status === 'error' && (
-                  <span className="max-w-[50%] truncate text-red-300" title={item.error}>
+                  <span className="max-w-[55%] truncate text-red-300" title={item.error}>
                     {item.error || 'Failed'}
                   </span>
                 )}
@@ -544,15 +554,27 @@ export default function PostingScreen(props: {
           }`}
         >
           <div className="font-semibold">
-            {singleResult.ok ? 'Script started on the engine ✓' : 'Script finished with problems'}
+            {singleResult.ok ? (
+              <span className="inline-flex items-center gap-1.5">
+                <CheckIcon size={14} /> Script started on the engine
+              </span>
+            ) : (
+              'Script finished with problems'
+            )}
           </div>
           <ul className="mt-2 flex flex-col gap-1 text-xs">
             {singleResult.started.map((s) => (
-              <li key={s.actionId}>✓ {s.summary}</li>
+              <li key={s.actionId} className="flex items-start gap-1.5">
+                <CheckIcon size={12} className="mt-0.5 shrink-0" />
+                <span>{s.summary}</span>
+              </li>
             ))}
             {singleResult.errors.map((e2) => (
-              <li key={e2.actionId}>
-                ✗ {e2.summary} — {e2.error}
+              <li key={e2.actionId} className="flex items-start gap-1.5">
+                <CloseIcon size={12} className="mt-0.5 shrink-0" />
+                <span>
+                  {e2.summary} — {e2.error}
+                </span>
               </li>
             ))}
           </ul>

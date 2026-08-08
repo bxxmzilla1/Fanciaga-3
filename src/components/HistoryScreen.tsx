@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { listRuns, type ScriptRun } from '../lib/history'
+import { RocketIcon } from './Icons'
 
 // History — every script run started from the Posting section, with the
 // Instagram accounts each run targeted and how it ended.
@@ -7,7 +8,7 @@ import { listRuns, type ScriptRun } from '../lib/history'
 const STATUS_META: Record<ScriptRun['status'], { label: string; cls: string }> = {
   queued: { label: 'Queued', cls: 'bg-white/[0.06] text-gray-400' },
   running: { label: 'Running…', cls: 'bg-accent/15 text-accent' },
-  done: { label: 'Done ✓', cls: 'bg-emerald-500/15 text-emerald-300' },
+  done: { label: 'Done', cls: 'bg-emerald-500/15 text-emerald-300' },
   error: { label: 'Failed', cls: 'bg-red-500/15 text-red-300' }
 }
 
@@ -91,7 +92,9 @@ export default function HistoryScreen(props: { userId: string }): JSX.Element {
                 className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3"
               >
                 <div className="flex items-center gap-3">
-                  <span className="text-lg">🚀</span>
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
+                    <RocketIcon size={16} />
+                  </span>
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-semibold text-gray-100">
                       {r.scriptName || 'Untitled script'}

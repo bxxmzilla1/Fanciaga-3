@@ -2,6 +2,16 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { listScripts, renameScript } from '../lib/scripts'
 import { loadScriptPreview, saveScriptSchedule, signMediaUrl, type PreviewVideo } from '../lib/preview'
 import type { ScriptAccountRef, ScriptEntry } from '../lib/types'
+import {
+  ChevronDownIcon,
+  ChevronUpIcon,
+  CloseIcon,
+  FilmIcon,
+  PencilIcon,
+  PlayIcon,
+  ScriptIcon,
+  StopIcon
+} from './Icons'
 
 // Scripts — every script recorded by the Script Writter in the connected
 // Fanciaga account, straight from the cloud. Pick one to use it in Posting
@@ -131,7 +141,9 @@ export default function ScriptsScreen(props: {
                     if (renamingId !== s.id) setExpanded(open ? null : s.id)
                   }}
                 >
-                  <span className="text-lg">📜</span>
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
+                    <ScriptIcon size={16} />
+                  </span>
                   <div className="min-w-0 flex-1">
                     {renamingId === s.id ? (
                       <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
@@ -180,10 +192,12 @@ export default function ScriptsScreen(props: {
                         setRenameValue(s.name)
                       }}
                     >
-                      ✏️
+                      <PencilIcon size={14} />
                     </button>
                   )}
-                  <span className="shrink-0 text-xs text-gray-600">{open ? '▲' : '▼'}</span>
+                  <span className="shrink-0 text-gray-600">
+                    {open ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}
+                  </span>
                 </div>
 
                 {open && (
@@ -352,7 +366,7 @@ function ScriptPreviewSidebar(props: { script: ScriptEntry; onClose: () => void 
           : prev
       )
       setDirty(false)
-      setSavedNote('Intervals saved ✓')
+      setSavedNote('Intervals saved')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not save the new intervals.')
     } finally {
@@ -365,7 +379,7 @@ function ScriptPreviewSidebar(props: { script: ScriptEntry; onClose: () => void 
       {/* Click-away backdrop */}
       <div className="fixed inset-0 z-40 bg-black/50" onClick={props.onClose} />
 
-      <aside className="fixed right-0 top-0 z-50 flex h-full w-full max-w-sm flex-col border-l border-white/10 bg-panel shadow-2xl">
+      <aside className="fixed inset-y-0 right-0 z-50 flex h-full w-full max-w-sm flex-col border-l border-white/10 bg-panel shadow-2xl sm:w-[min(24rem,100vw)]">
         <div className="flex items-start justify-between gap-3 border-b border-white/10 px-4 py-3">
           <div className="min-w-0">
             <h2 className="truncate text-sm font-semibold text-gray-100">Preview — {props.script.name}</h2>
@@ -374,10 +388,11 @@ function ScriptPreviewSidebar(props: { script: ScriptEntry; onClose: () => void 
             </p>
           </div>
           <button
-            className="shrink-0 rounded-lg px-2 py-1 text-sm text-gray-400 transition-colors hover:bg-white/[0.06] hover:text-white"
+            className="shrink-0 rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-white/[0.06] hover:text-white"
             onClick={props.onClose}
+            aria-label="Close preview"
           >
-            ✕
+            <CloseIcon size={18} />
           </button>
         </div>
 
@@ -409,12 +424,14 @@ function ScriptPreviewSidebar(props: { script: ScriptEntry; onClose: () => void 
                         {v.thumbUrl ? (
                           <img src={v.thumbUrl} alt={v.title} loading="lazy" className="h-full w-full object-cover" />
                         ) : (
-                          <span className="flex h-full w-full items-center justify-center text-lg text-gray-600">🎞</span>
+                          <span className="flex h-full w-full items-center justify-center text-gray-600">
+                            <FilmIcon size={16} />
+                          </span>
                         )}
                         {v.mediaPath && (
                           <span className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-80 transition-opacity group-hover:opacity-100">
-                            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white/90 pl-0.5 text-[10px] text-black">
-                              {playingKey === v.key ? '■' : '▶'}
+                            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white/90 text-black">
+                              {playingKey === v.key ? <StopIcon size={11} /> : <PlayIcon size={11} />}
                             </span>
                           </span>
                         )}

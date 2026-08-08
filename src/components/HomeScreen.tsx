@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import {
   disconnectEngine,
   fetchEngineLink,
@@ -13,11 +13,23 @@ import PostingScreen from './PostingScreen'
 import ScriptsScreen from './ScriptsScreen'
 import ScriptCreatorScreen from './ScriptCreatorScreen'
 import HistoryScreen from './HistoryScreen'
+import {
+  CloseIcon,
+  CreatorIcon,
+  FilmIcon,
+  HistoryIcon,
+  HomeIcon,
+  MenuIcon,
+  RocketIcon,
+  ScriptIcon,
+  SendIcon,
+  SparklesIcon
+} from './Icons'
 
 type View = 'cards' | 'posting' | 'scripts' | 'creator' | 'history'
 
-// Remember which section is open across browser refreshes.
 const VIEW_KEY = 'f3.view'
+const NAV_OPEN_KEY = 'f3.navOpen'
 
 function loadSavedView(): View {
   try {
@@ -28,26 +40,52 @@ function loadSavedView(): View {
   }
 }
 
-const CARDS: Array<{ id: string; title: string; desc: string; emoji: string; enabled: boolean }> = [
+function loadNavOpen(): boolean {
+  // Desktop default: open. Mobile starts closed (overridden by media query on first paint via state).
+  try {
+    const v = localStorage.getItem(NAV_OPEN_KEY)
+    if (v === '0') return false
+    if (v === '1') return true
+  } catch {
+    // ignore
+  }
+  return typeof window !== 'undefined' ? window.matchMedia('(min-width: 1024px)').matches : true
+}
+
+const NAV: Array<{ id: View; label: string; icon: ReactNode }> = [
+  { id: 'cards', label: 'Home', icon: <HomeIcon size={16} /> },
+  { id: 'posting', label: 'Posting', icon: <SendIcon size={16} /> },
+  { id: 'scripts', label: 'Scripts', icon: <ScriptIcon size={16} /> },
+  { id: 'creator', label: 'Script Creator', icon: <CreatorIcon size={16} /> },
+  { id: 'history', label: 'History', icon: <HistoryIcon size={16} /> }
+]
+
+const CARDS: Array<{
+  id: string
+  title: string
+  desc: string
+  icon: ReactNode
+  enabled: boolean
+}> = [
   {
     id: 'ai',
     title: 'AI Generation',
     desc: 'Mirror Reel, Halyxis, Reelzey & more — runs on your Fanciaga engine.',
-    emoji: '✨',
+    icon: <SparklesIcon size={22} />,
     enabled: false
   },
   {
     id: 'editing',
     title: 'Editing',
     desc: 'Spoofer, Cutter, Mixer, Overlay Captions — runs on your Fanciaga engine.',
-    emoji: '🎬',
+    icon: <FilmIcon size={22} />,
     enabled: false
   },
   {
     id: 'posting',
     title: 'Posting',
     desc: 'Load a Script recorded by the Script Writter and replay it — with the IG Selector to swap accounts.',
-    emoji: '🚀',
+    icon: <RocketIcon size={22} />,
     enabled: true
   }
 ]
@@ -58,11 +96,10 @@ export default function HomeScreen(props: {
   onUnpaired: () => void
 }): JSX.Element {
   const [view, setViewState] = useState<View>(loadSavedView)
+  const [navOpen, setNavOpenState] = useState(loadNavOpen)
   const [link, setLink] = useState<EngineLink | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  // A script picked in the Scripts section, preloaded into Posting.
   const [pickedScript, setPickedScript] = useState<ScriptEntry | null>(null)
-  // Every Fanciaga app logged into this account (for the script assigner).
   const [instances, setInstances] = useState<EngineInstance[]>([])
   const [assignOpen, setAssignOpen] = useState(false)
 
@@ -71,11 +108,23 @@ export default function HomeScreen(props: {
     try {
       localStorage.setItem(VIEW_KEY, v)
     } catch {
-      // storage unavailable — session-only persistence
+      // storage unavailable
+    }
+    // On small screens, close the drawer after navigating.
+    if (typeof window !== 'undefined' && window.matchMedia('(max-width: 1023px)').matches) {
+      setNavOpen(false)
     }
   }
 
-  // Keep an eye on the engine: offline banner + honor a desktop-side disconnect.
+  function setNavOpen(open: boolean): void {
+    setNavOpenState(open)
+    try {
+      localStorage.setItem(NAV_OPEN_KEY, open ? '1' : '0')
+    } catch {
+      // ignore
+    }
+  }
+
   useEffect(() => {
     let alive = true
     const check = async (): Promise<void> => {
@@ -117,68 +166,65 @@ export default function HomeScreen(props: {
     ? instances.find((i) => i.instanceId === assignedInstance) || null
     : null
 
+  const viewLabel = NAV.find((n) => n.id === view)?.label || 'Home'
+
   return (
-    <div className="flex h-full">
-      {/* Sidebar */}
-      <aside className="flex w-56 shrink-0 flex-col border-r border-white/10 bg-white/[0.02]">
-        <div className="flex h-16 items-center gap-2.5 px-4">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-accent/40 bg-panel shadow-glow">
+    <div className="relative flex h-full min-h-0 overflow-hidden">
+      {/* Mobile backdrop when left nav is open */}
+      {navOpen && (
+        <button
+          type="button"
+          aria-label="Close navigation"
+          className="fixed inset-0 z-40 bg-black/60 lg:hidden"
+          onClick={() => setNavOpen(false)}
+        />
+      )}
+
+      {/* Left sidebar — drawer on mobile, collapsible rail on desktop */}
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 flex w-[min(18rem,88vw)] flex-col border-r border-white/10 bg-panel transition-transform duration-200 ease-out lg:static lg:z-0 lg:w-56 lg:shrink-0 lg:bg-white/[0.02] ${
+          navOpen ? 'translate-x-0' : '-translate-x-full lg:hidden'
+        }`}
+      >
+        <div className="flex h-14 items-center gap-2.5 px-3 sm:h-16 sm:px-4">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-accent/40 bg-panel shadow-glow">
             <span className="bg-gradient-to-r from-accent to-accent2 bg-clip-text text-sm font-bold text-transparent">
               F3
             </span>
           </div>
-          <div className="flex min-w-0 flex-col leading-tight">
+          <div className="flex min-w-0 flex-1 flex-col leading-tight">
             <span className="truncate bg-gradient-to-r from-accent to-accent2 bg-clip-text text-[15px] font-semibold tracking-tight text-transparent">
               FANCIAGA 3
             </span>
             <span className="truncate text-[10px] text-gray-500">{props.email}</span>
           </div>
+          <button
+            type="button"
+            className="rounded-lg p-1.5 text-gray-400 hover:bg-white/[0.06] hover:text-white lg:hidden"
+            onClick={() => setNavOpen(false)}
+            aria-label="Close menu"
+          >
+            <CloseIcon size={18} />
+          </button>
         </div>
 
-        <nav className="flex flex-1 flex-col gap-1 px-3 py-2">
-          <button
-            className={`rounded-xl px-3 py-2.5 text-left text-sm transition-colors ${
-              view === 'cards' ? 'bg-accent/15 text-white' : 'text-gray-400 hover:bg-white/[0.05] hover:text-gray-100'
-            }`}
-            onClick={() => setView('cards')}
-          >
-            Home
-          </button>
-          <button
-            className={`rounded-xl px-3 py-2.5 text-left text-sm transition-colors ${
-              view === 'posting' ? 'bg-accent/15 text-white' : 'text-gray-400 hover:bg-white/[0.05] hover:text-gray-100'
-            }`}
-            onClick={() => setView('posting')}
-          >
-            Posting
-          </button>
-          <button
-            className={`rounded-xl px-3 py-2.5 text-left text-sm transition-colors ${
-              view === 'scripts' ? 'bg-accent/15 text-white' : 'text-gray-400 hover:bg-white/[0.05] hover:text-gray-100'
-            }`}
-            onClick={() => setView('scripts')}
-          >
-            Scripts
-          </button>
-          <button
-            className={`rounded-xl px-3 py-2.5 text-left text-sm transition-colors ${
-              view === 'creator' ? 'bg-accent/15 text-white' : 'text-gray-400 hover:bg-white/[0.05] hover:text-gray-100'
-            }`}
-            onClick={() => setView('creator')}
-          >
-            Script Creator
-          </button>
-          <button
-            className={`rounded-xl px-3 py-2.5 text-left text-sm transition-colors ${
-              view === 'history' ? 'bg-accent/15 text-white' : 'text-gray-400 hover:bg-white/[0.05] hover:text-gray-100'
-            }`}
-            onClick={() => setView('history')}
-          >
-            History
-          </button>
+        <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-2">
+          {NAV.map((item) => (
+            <button
+              key={item.id}
+              className={`flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm transition-colors ${
+                view === item.id
+                  ? 'bg-accent/15 text-white'
+                  : 'text-gray-400 hover:bg-white/[0.05] hover:text-gray-100'
+              }`}
+              onClick={() => setView(item.id)}
+            >
+              <span className="shrink-0 opacity-90">{item.icon}</span>
+              {item.label}
+            </button>
+          ))}
         </nav>
 
-        {/* Engine status */}
         <div className="px-3 pb-2">
           <div className="rounded-xl border border-white/[0.06] bg-white/[0.03] px-3 py-2 text-[11px]">
             <div className="mb-1 flex items-center gap-1.5">
@@ -186,7 +232,6 @@ export default function HomeScreen(props: {
               <span className="text-gray-300">Engine {link?.online ? 'ONLINE' : 'OFFLINE'}</span>
             </div>
             <div className="truncate text-gray-600">{link?.engineName || 'Fanciaga app'}</div>
-            {/* Which Fanciaga app runs the scripts (assigner) */}
             <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-white/[0.06] pt-1.5">
               <span className="truncate text-gray-500">
                 Scripts:{' '}
@@ -208,7 +253,6 @@ export default function HomeScreen(props: {
           </div>
         </div>
 
-        {/* Disconnect + sign out */}
         <div className="flex flex-col gap-1 border-t border-white/10 p-3">
           <button
             className="rounded-xl border border-red-500/30 px-3 py-2.5 text-sm text-red-300 transition-colors hover:bg-red-500/10"
@@ -222,78 +266,111 @@ export default function HomeScreen(props: {
           >
             Sign out
           </button>
+          <button
+            type="button"
+            className="mt-1 hidden items-center justify-center gap-1.5 rounded-xl border border-white/10 px-3 py-2 text-xs text-gray-400 transition-colors hover:bg-white/[0.05] hover:text-gray-200 lg:flex"
+            onClick={() => setNavOpen(false)}
+          >
+            Hide sidebar
+          </button>
         </div>
       </aside>
 
-      {/* Content */}
-      <main className="min-w-0 flex-1 overflow-y-auto p-6">
-        {link && !link.online && (
-          <div className="mx-auto mb-4 max-w-3xl rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-            Your Fanciaga engine looks offline — open the desktop app and sign in so commands can run.
+      {/* Main column */}
+      <div className="flex min-w-0 flex-1 flex-col">
+        {/* Top bar — always visible on mobile; also when nav is hidden on desktop */}
+        <header className="flex h-14 shrink-0 items-center gap-2 border-b border-white/10 bg-white/[0.02] px-3 sm:px-4 lg:h-12">
+          <button
+            type="button"
+            className="rounded-lg p-2 text-gray-300 transition-colors hover:bg-white/[0.06] hover:text-white"
+            onClick={() => setNavOpen(!navOpen)}
+            aria-label={navOpen ? 'Hide navigation' : 'Show navigation'}
+          >
+            <MenuIcon size={20} />
+          </button>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-semibold text-gray-100">{viewLabel}</div>
+            <div className="truncate text-[10px] text-gray-500 lg:hidden">{props.email}</div>
           </div>
-        )}
-        {notice && (
-          <div className="mx-auto mb-4 flex max-w-3xl items-start justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-gray-300">
-            <span>{notice}</span>
-            <button className="shrink-0 text-gray-500 hover:text-white" onClick={() => setNotice(null)}>
-              Dismiss
-            </button>
+          <div className="flex shrink-0 items-center gap-1.5 rounded-full border border-white/[0.06] bg-white/[0.03] px-2 py-1 text-[10px] text-gray-400">
+            <span className={`h-1.5 w-1.5 rounded-full ${link?.online ? 'bg-emerald-400' : 'bg-red-400'}`} />
+            <span className="hidden sm:inline">{link?.online ? 'Engine online' : 'Engine offline'}</span>
           </div>
-        )}
+        </header>
 
-        {view === 'cards' ? (
-          <div className="mx-auto max-w-3xl">
-            <h1 className="text-lg font-semibold text-gray-100">What do you want to do?</h1>
-            <p className="mt-1 text-sm text-gray-500">
-              Everything runs on your connected Fanciaga engine.
-            </p>
-            <div className="mt-6 grid gap-4 sm:grid-cols-3">
-              {CARDS.map((c) => (
-                <button
-                  key={c.id}
-                  className={`group flex flex-col items-start gap-3 rounded-3xl border p-5 text-left transition-all ${
-                    c.enabled
-                      ? 'border-accent/30 bg-panel hover:-translate-y-0.5 hover:border-accent/60 hover:shadow-glow'
-                      : 'border-white/10 bg-white/[0.02] opacity-70 hover:opacity-90'
-                  }`}
-                  onClick={() => {
-                    if (c.enabled) setView('posting')
-                    else setNotice(`${c.title} runs on your Fanciaga engine — coming to Fanciaga 3 soon.`)
-                  }}
-                >
-                  <span className="text-3xl">{c.emoji}</span>
-                  <span className="text-sm font-semibold text-gray-100">{c.title}</span>
-                  <span className="text-xs leading-relaxed text-gray-500">{c.desc}</span>
-                  {!c.enabled && (
-                    <span className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[10px] font-medium text-gray-500">
-                      Soon
-                    </span>
-                  )}
-                </button>
-              ))}
+        <main className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6">
+          {link && !link.online && (
+            <div className="mx-auto mb-4 max-w-3xl rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+              Your Fanciaga engine looks offline — open the desktop app and sign in so commands can run.
             </div>
-          </div>
-        ) : view === 'scripts' ? (
-          <ScriptsScreen
-            userId={props.userId}
-            onUseInPosting={(s) => {
-              setPickedScript(s)
-              setView('posting')
-            }}
-          />
-        ) : view === 'creator' ? (
-          <ScriptCreatorScreen userId={props.userId} onSaved={() => setView('scripts')} />
-        ) : view === 'history' ? (
-          <HistoryScreen userId={props.userId} />
-        ) : (
-          <PostingScreen
-            key={pickedScript?.id || 'default'}
-            userId={props.userId}
-            engineOnline={!!link?.online}
-            initialScript={pickedScript}
-          />
-        )}
-      </main>
+          )}
+          {notice && (
+            <div className="mx-auto mb-4 flex max-w-3xl items-start justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-gray-300">
+              <span>{notice}</span>
+              <button className="shrink-0 text-gray-500 hover:text-white" onClick={() => setNotice(null)}>
+                <CloseIcon size={16} />
+              </button>
+            </div>
+          )}
+
+          {view === 'cards' ? (
+            <div className="mx-auto max-w-3xl">
+              <h1 className="text-lg font-semibold text-gray-100">What do you want to do?</h1>
+              <p className="mt-1 text-sm text-gray-500">Everything runs on your connected Fanciaga engine.</p>
+              <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 sm:gap-4">
+                {CARDS.map((c) => (
+                  <button
+                    key={c.id}
+                    className={`group flex flex-col items-start gap-3 rounded-3xl border p-5 text-left transition-all ${
+                      c.enabled
+                        ? 'border-accent/30 bg-panel hover:-translate-y-0.5 hover:border-accent/60 hover:shadow-glow'
+                        : 'border-white/10 bg-white/[0.02] opacity-70 hover:opacity-90'
+                    }`}
+                    onClick={() => {
+                      if (c.enabled) setView('posting')
+                      else setNotice(`${c.title} runs on your Fanciaga engine — coming to Fanciaga 3 soon.`)
+                    }}
+                  >
+                    <span
+                      className={`flex h-10 w-10 items-center justify-center rounded-xl ${
+                        c.enabled ? 'bg-accent/15 text-accent' : 'bg-white/[0.06] text-gray-400'
+                      }`}
+                    >
+                      {c.icon}
+                    </span>
+                    <span className="text-sm font-semibold text-gray-100">{c.title}</span>
+                    <span className="text-xs leading-relaxed text-gray-500">{c.desc}</span>
+                    {!c.enabled && (
+                      <span className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[10px] font-medium text-gray-500">
+                        Soon
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : view === 'scripts' ? (
+            <ScriptsScreen
+              userId={props.userId}
+              onUseInPosting={(s) => {
+                setPickedScript(s)
+                setView('posting')
+              }}
+            />
+          ) : view === 'creator' ? (
+            <ScriptCreatorScreen userId={props.userId} onSaved={() => setView('scripts')} />
+          ) : view === 'history' ? (
+            <HistoryScreen userId={props.userId} />
+          ) : (
+            <PostingScreen
+              key={pickedScript?.id || 'default'}
+              userId={props.userId}
+              engineOnline={!!link?.online}
+              initialScript={pickedScript}
+            />
+          )}
+        </main>
+      </div>
 
       {assignOpen && (
         <EngineAssignerModal
@@ -307,11 +384,6 @@ export default function HomeScreen(props: {
   )
 }
 
-/**
- * Assigner — pick which Fanciaga app runs this account's scripts when several
- * apps are logged in at once. Each app shows its code in Settings so you can
- * match the list below to the right PC.
- */
 function EngineAssignerModal(props: {
   instances: EngineInstance[]
   assignedInstance: string
@@ -328,22 +400,22 @@ function EngineAssignerModal(props: {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-[60] flex items-end justify-center bg-black/70 p-0 backdrop-blur-sm sm:items-center sm:p-4"
       onClick={props.onClose}
     >
       <div
-        className="w-full max-w-md rounded-3xl border border-white/10 bg-panel p-5 shadow-2xl"
+        className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-t-3xl border border-white/10 bg-panel p-5 shadow-2xl sm:rounded-3xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-1 flex items-center justify-between">
+        <div className="mb-1 flex items-center justify-between gap-3">
           <h2 className="text-base font-semibold text-gray-100">Assign scripts to a Fanciaga app</h2>
-          <button className="text-gray-500 hover:text-white" onClick={props.onClose}>
-            ✕
+          <button className="rounded-lg p-1.5 text-gray-500 hover:bg-white/[0.06] hover:text-white" onClick={props.onClose}>
+            <CloseIcon size={18} />
           </button>
         </div>
         <p className="mb-4 text-xs leading-relaxed text-gray-500">
-          Every Fanciaga app logged into this account shows its code in Settings → Account. Pick which
-          one should run the scripts — the others will ignore them.
+          Every Fanciaga app logged into this account shows its code in Settings → Account. Pick which one
+          should run the scripts — the others will ignore them.
         </p>
 
         <div className="flex max-h-80 flex-col gap-2 overflow-y-auto">
@@ -373,7 +445,7 @@ function EngineAssignerModal(props: {
               onClick={() => props.onAssign(i.instanceId)}
             >
               <div className="min-w-0">
-                <p className="flex items-center gap-2 text-sm text-gray-100">
+                <p className="flex flex-wrap items-center gap-2 text-sm text-gray-100">
                   <span className="font-mono font-semibold tracking-widest text-accent">
                     {i.code || i.instanceId.slice(0, 7)}
                   </span>
@@ -392,8 +464,8 @@ function EngineAssignerModal(props: {
 
           {instances.length === 0 && (
             <p className="rounded-2xl border border-white/10 bg-white/[0.02] px-3 py-4 text-center text-xs text-gray-500">
-              No Fanciaga apps found yet. Open the desktop app, sign in, and it will appear here within a
-              few seconds. (Make sure the latest database schema is applied.)
+              No Fanciaga apps found yet. Open the desktop app, sign in, and it will appear here within a few
+              seconds.
             </p>
           )}
         </div>

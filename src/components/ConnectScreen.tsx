@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { fetchEngineLink, setPwaConnected, type EngineLink } from '../lib/engine'
 import { supabase } from '../lib/supabase'
+import { CheckIcon } from './Icons'
 
 // Searches for the user's Fanciaga desktop app (the engine) by watching its
 // heartbeat. When it's ONLINE: pair (pwa_connected = true) and show a brief
@@ -51,8 +52,8 @@ export default function ConnectScreen(props: {
   if (phase === 'confirming') {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
-        <div className="flex h-20 w-20 items-center justify-center rounded-full border-2 border-emerald-400/60 bg-emerald-500/10 text-4xl text-emerald-300">
-          ✓
+        <div className="flex h-20 w-20 items-center justify-center rounded-full border-2 border-emerald-400/60 bg-emerald-500/10 text-emerald-300">
+          <CheckIcon size={36} />
         </div>
         <h1 className="bg-gradient-to-r from-accent to-accent2 bg-clip-text text-3xl font-extrabold tracking-widest text-transparent sm:text-5xl">
           ENGINE ONLINE
