@@ -150,10 +150,16 @@ export async function setPwaConnected(userId: string, connected: boolean): Promi
   })
 }
 
-async function sendCommand(userId: string, command: string, payload: unknown): Promise<string> {
+async function sendCommand(
+  userId: string,
+  command: string,
+  payload: unknown,
+  engineCode?: string
+): Promise<string> {
   const row: Record<string, unknown> = { user_id: userId, command, payload: payload ?? {} }
-  // Connected by code → address the command to that engine instead of our own.
-  const code = getStoredEngineCode()
+  // Explicit code (Posting's target-engine box) wins; otherwise fall back to
+  // the code used to connect (guest mode). Empty = our own engine.
+  const code = normalizeEngineCode(engineCode || '') || getStoredEngineCode()
   if (code) row.engine_code = code
   const { data, error } = await supabase.from('engine_commands').insert(row).select('id').single()
   if (error || !data) throw new Error('Could not reach the engine — check your connection and try again.')
@@ -198,12 +204,13 @@ export async function listEngineLabels(userId: string): Promise<EngineLabel[]> {
  */
 export async function listEngineAccounts(
   userId: string,
-  label?: { id?: string; usernames?: string[] }
+  label?: { id?: string; usernames?: string[] },
+  engineCode?: string
 ): Promise<EngineAccount[]> {
   const payload: Record<string, unknown> = {}
   if (label?.id) payload.labelId = label.id
   if (label?.usernames?.length) payload.usernames = label.usernames
-  const id = await sendCommand(userId, 'list_accounts', payload)
+  const id = await sendCommand(userId, 'list_accounts', payload, engineCode)
   const res = await waitForCommand(id, 90_000)
   return Array.isArray(res.accounts) ? (res.accounts as EngineAccount[]) : []
 }
@@ -213,9 +220,10 @@ export async function runScriptOnEngine(
   userId: string,
   script: ScriptEntry,
   replacements: Record<string, ScriptAccountRef>,
-  onCommandId?: (commandId: string) => void
+  onCommandId?: (commandId: string) => void,
+  engineCode?: string
 ): Promise<RunScriptResult> {
-  const id = await sendCommand(userId, 'run_script', { script, replacements })
+  const id = await sendCommand(userId, 'run_script', { script, replacements }, engineCode)
   onCommandId?.(id)
   const res = await waitForCommand(id, 10 * 60_000)
   return {
@@ -247,8 +255,12 @@ export async function cancelPendingCommand(commandId: string): Promise<boolean> 
  * Tell the engine to force-stop. With a commandId only that queued/running
  * run stops; without one, everything this account has on the engine stops.
  */
-export async function forceStopEngine(userId: string, commandId?: string): Promise<void> {
-  const id = await sendCommand(userId, 'force_stop', commandId ? { commandId } : {})
+export async function forceStopEngine(
+  userId: string,
+  commandId?: string,
+  engineCode?: string
+): Promise<void> {
+  const id = await sendCommand(userId, 'force_stop', commandId ? { commandId } : {}, engineCode)
   // Best-effort: the stop is latched engine-side even if this wait times out.
   await waitForCommand(id, 30_000).catch(() => {})
 }
@@ -262,12 +274,15 @@ export async function forceStopEngine(userId: string, commandId?: string): Promi
 export async function enqueueScriptStack(
   userId: string,
   script: ScriptEntry,
-  runs: Array<{ replacements: Record<string, ScriptAccountRef> }>
+  runs: Array<{ replacements: Record<string, ScriptAccountRef> }>,
+  engineCode?: string
 ): Promise<string[]> {
   if (!runs.length) throw new Error('Select at least one Instagram account.')
   const ids: string[] = []
   for (const run of runs) {
-    ids.push(await sendCommand(userId, 'run_script', { script, replacements: run.replacements }))
+    ids.push(
+      await sendCommand(userId, 'run_script', { script, replacements: run.replacements }, engineCode)
+    )
   }
   return ids
 }

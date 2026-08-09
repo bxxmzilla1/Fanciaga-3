@@ -116,11 +116,26 @@ export async function listRuns(userId: string): Promise<ScriptRun[]> {
  */
 export async function forceStopRun(userId: string, run: ScriptRun): Promise<void> {
   let stopped = false
+  let engineCode = ''
   if (run.commandId) {
     stopped = await cancelPendingCommand(run.commandId).catch(() => false)
+    if (!stopped) {
+      // Send the stop to the SAME engine the run was addressed to (it may
+      // have gone to another engine by code, not our own).
+      try {
+        const { data } = await supabase
+          .from('engine_commands')
+          .select('engine_code')
+          .eq('id', run.commandId)
+          .maybeSingle()
+        engineCode = String((data as Record<string, unknown> | null)?.engine_code || '')
+      } catch {
+        engineCode = ''
+      }
+    }
   }
   if (!stopped) {
-    await forceStopEngine(userId, run.commandId || undefined)
+    await forceStopEngine(userId, run.commandId || undefined, engineCode || undefined)
   }
   await updateRun(run.id, 'error', 'Force stopped.')
 }
