@@ -10,6 +10,66 @@ import type { EngineAccount, RunScriptResult, ScriptAccountRef, ScriptEntry } fr
 // The engine heartbeats every ~8s; allow a little slack.
 const ONLINE_WINDOW_MS = 30_000
 
+// ── Connect by engine code (guest mode) ─────────────────────────────────────
+// A Fanciaga 3 user can connect to ANY engine with the short code shown in
+// that desktop app's Settings — their account does not need to be logged into
+// the app. While a code is stored, every command is addressed to that engine.
+
+const CODE_KEY = 'f3.engineCode'
+
+/** "7qk3dm" / "7QK-3DM" / " 7qk 3dm " → "7QK-3DM". */
+export function normalizeEngineCode(raw: string): string {
+  const cleaned = raw.trim().toUpperCase().replace(/[^0-9A-Z]/g, '')
+  if (cleaned.length !== 6) return cleaned
+  return `${cleaned.slice(0, 3)}-${cleaned.slice(3)}`
+}
+
+export function getStoredEngineCode(): string {
+  try {
+    return (localStorage.getItem(CODE_KEY) || '').trim().toUpperCase()
+  } catch {
+    return ''
+  }
+}
+
+export function storeEngineCode(code: string): void {
+  try {
+    const clean = normalizeEngineCode(code)
+    if (clean) localStorage.setItem(CODE_KEY, clean)
+    else localStorage.removeItem(CODE_KEY)
+  } catch {
+    // storage unavailable — session-only
+  }
+}
+
+export interface CodeEngine {
+  code: string
+  name: string
+  onlineAt: string | null
+  online: boolean
+}
+
+/** Look an engine up by its short code (Settings → Engine code). */
+export async function fetchEngineByCode(code: string): Promise<CodeEngine | null> {
+  const clean = normalizeEngineCode(code)
+  if (!clean) return null
+  const { data, error } = await supabase
+    .from('engine_instances')
+    .select('code, name, online_at')
+    .eq('code', clean)
+    .order('online_at', { ascending: false })
+    .limit(1)
+  if (error || !data?.length) return null
+  const r = data[0] as Record<string, unknown>
+  const onlineAt = r.online_at ? String(r.online_at) : null
+  return {
+    code: clean,
+    name: String(r.name || ''),
+    onlineAt,
+    online: !!onlineAt && Date.now() - new Date(onlineAt).getTime() < ONLINE_WINDOW_MS
+  }
+}
+
 export interface EngineLink {
   engineName: string
   onlineAt: string | null
@@ -91,11 +151,11 @@ export async function setPwaConnected(userId: string, connected: boolean): Promi
 }
 
 async function sendCommand(userId: string, command: string, payload: unknown): Promise<string> {
-  const { data, error } = await supabase
-    .from('engine_commands')
-    .insert({ user_id: userId, command, payload: payload ?? {} })
-    .select('id')
-    .single()
+  const row: Record<string, unknown> = { user_id: userId, command, payload: payload ?? {} }
+  // Connected by code → address the command to that engine instead of our own.
+  const code = getStoredEngineCode()
+  if (code) row.engine_code = code
+  const { data, error } = await supabase.from('engine_commands').insert(row).select('id').single()
   if (error || !data) throw new Error('Could not reach the engine — check your connection and try again.')
   return String(data.id)
 }

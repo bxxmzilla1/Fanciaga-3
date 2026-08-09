@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from './lib/supabase'
+import { storeEngineCode } from './lib/engine'
 import LoginScreen from './components/LoginScreen'
 import ConnectScreen from './components/ConnectScreen'
 import HomeScreen from './components/HomeScreen'
@@ -37,7 +38,10 @@ export default function App(): JSX.Element {
     })
     const { data: sub } = supabase.auth.onAuthStateChange((_evt, s) => {
       setSession(s)
-      if (!s) setPaired(false)
+      if (!s) {
+        setPaired(false)
+        storeEngineCode('') // next user must connect fresh
+      }
     })
     return () => sub.subscription.unsubscribe()
     // eslint-disable-next-line react-hooks/exhaustive-deps

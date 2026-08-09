@@ -1,9 +1,13 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import {
   disconnectEngine,
+  fetchEngineByCode,
   fetchEngineLink,
+  getStoredEngineCode,
   listEngineInstances,
   setAssignedInstance,
+  storeEngineCode,
+  type CodeEngine,
   type EngineInstance,
   type EngineLink
 } from '../lib/engine'
@@ -102,6 +106,10 @@ export default function HomeScreen(props: {
   const [pickedScript, setPickedScript] = useState<ScriptEntry | null>(null)
   const [instances, setInstances] = useState<EngineInstance[]>([])
   const [assignOpen, setAssignOpen] = useState(false)
+  // Connected by engine code (guest mode) — the engine belongs to someone
+  // else, so status comes from engine_instances instead of our engine_links.
+  const [engineCode] = useState(getStoredEngineCode)
+  const [codeEngine, setCodeEngine] = useState<CodeEngine | null>(null)
 
   function setView(v: View): void {
     setViewState(v)
@@ -128,6 +136,13 @@ export default function HomeScreen(props: {
   useEffect(() => {
     let alive = true
     const check = async (): Promise<void> => {
+      if (engineCode) {
+        // Guest mode — the other engine's presence row is all that matters.
+        const eng = await fetchEngineByCode(engineCode).catch(() => null)
+        if (!alive) return
+        setCodeEngine(eng)
+        return
+      }
       const [l, inst] = await Promise.all([
         fetchEngineLink(props.userId).catch(() => null),
         listEngineInstances(props.userId).catch(() => [] as EngineInstance[])
@@ -147,6 +162,12 @@ export default function HomeScreen(props: {
   }, [props.userId])
 
   async function disconnect(): Promise<void> {
+    if (engineCode) {
+      // Guest mode — just forget the code; the host engine is untouched.
+      storeEngineCode('')
+      props.onUnpaired()
+      return
+    }
     await disconnectEngine(props.userId)
     props.onUnpaired()
   }
@@ -165,6 +186,12 @@ export default function HomeScreen(props: {
   const assignedInfo = assignedInstance
     ? instances.find((i) => i.instanceId === assignedInstance) || null
     : null
+
+  const engineOnline = engineCode ? !!codeEngine?.online : !!link?.online
+  const engineName = engineCode
+    ? codeEngine?.name || `Engine ${engineCode}`
+    : link?.engineName || 'Fanciaga app'
+  const engineChecked = engineCode ? codeEngine !== null : link !== null
 
   const viewLabel = NAV.find((n) => n.id === view)?.label || 'Home'
 
@@ -228,28 +255,34 @@ export default function HomeScreen(props: {
         <div className="px-3 pb-2">
           <div className="rounded-xl border border-white/[0.06] bg-white/[0.03] px-3 py-2 text-[11px]">
             <div className="mb-1 flex items-center gap-1.5">
-              <span className={`h-1.5 w-1.5 rounded-full ${link?.online ? 'bg-emerald-400' : 'bg-red-400'}`} />
-              <span className="text-gray-300">Engine {link?.online ? 'ONLINE' : 'OFFLINE'}</span>
+              <span className={`h-1.5 w-1.5 rounded-full ${engineOnline ? 'bg-emerald-400' : 'bg-red-400'}`} />
+              <span className="text-gray-300">Engine {engineOnline ? 'ONLINE' : 'OFFLINE'}</span>
             </div>
-            <div className="truncate text-gray-600">{link?.engineName || 'Fanciaga app'}</div>
-            <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-white/[0.06] pt-1.5">
-              <span className="truncate text-gray-500">
-                Scripts:{' '}
-                {assignedInstance ? (
-                  <span className="font-mono text-accent">
-                    {assignedInfo?.code || assignedInstance.slice(0, 7)}
-                  </span>
-                ) : (
-                  <span className="text-gray-400">any online app</span>
-                )}
-              </span>
-              <button
-                className="shrink-0 rounded-md bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-gray-300 transition-colors hover:bg-white/[0.12] hover:text-white"
-                onClick={() => setAssignOpen(true)}
-              >
-                Assign
-              </button>
-            </div>
+            <div className="truncate text-gray-600">{engineName}</div>
+            {engineCode ? (
+              <div className="mt-1.5 border-t border-white/[0.06] pt-1.5 text-gray-500">
+                Connected by code <span className="font-mono text-accent">{engineCode}</span>
+              </div>
+            ) : (
+              <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-white/[0.06] pt-1.5">
+                <span className="truncate text-gray-500">
+                  Scripts:{' '}
+                  {assignedInstance ? (
+                    <span className="font-mono text-accent">
+                      {assignedInfo?.code || assignedInstance.slice(0, 7)}
+                    </span>
+                  ) : (
+                    <span className="text-gray-400">any online app</span>
+                  )}
+                </span>
+                <button
+                  className="shrink-0 rounded-md bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-gray-300 transition-colors hover:bg-white/[0.12] hover:text-white"
+                  onClick={() => setAssignOpen(true)}
+                >
+                  Assign
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -258,7 +291,7 @@ export default function HomeScreen(props: {
             className="rounded-xl border border-red-500/30 px-3 py-2.5 text-sm text-red-300 transition-colors hover:bg-red-500/10"
             onClick={() => void disconnect()}
           >
-            Disconnect Fanciaga app
+            {engineCode ? 'Disconnect engine' : 'Disconnect Fanciaga app'}
           </button>
           <button
             className="rounded-xl px-3 py-2 text-xs text-gray-500 transition-colors hover:bg-white/[0.05] hover:text-gray-200"
@@ -293,15 +326,17 @@ export default function HomeScreen(props: {
             <div className="truncate text-[10px] text-gray-500 lg:hidden">{props.email}</div>
           </div>
           <div className="flex shrink-0 items-center gap-1.5 rounded-full border border-white/[0.06] bg-white/[0.03] px-2 py-1 text-[10px] text-gray-400">
-            <span className={`h-1.5 w-1.5 rounded-full ${link?.online ? 'bg-emerald-400' : 'bg-red-400'}`} />
-            <span className="hidden sm:inline">{link?.online ? 'Engine online' : 'Engine offline'}</span>
+            <span className={`h-1.5 w-1.5 rounded-full ${engineOnline ? 'bg-emerald-400' : 'bg-red-400'}`} />
+            <span className="hidden sm:inline">{engineOnline ? 'Engine online' : 'Engine offline'}</span>
           </div>
         </header>
 
         <main className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6">
-          {link && !link.online && (
+          {engineChecked && !engineOnline && (
             <div className="mx-auto mb-4 max-w-3xl rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-              Your Fanciaga engine looks offline — open the desktop app and sign in so commands can run.
+              {engineCode
+                ? `The engine with code ${engineCode} looks offline — make sure that Fanciaga app is open and signed in.`
+                : 'Your Fanciaga engine looks offline — open the desktop app and sign in so commands can run.'}
             </div>
           )}
           {notice && (
@@ -365,7 +400,7 @@ export default function HomeScreen(props: {
             <PostingScreen
               key={pickedScript?.id || 'default'}
               userId={props.userId}
-              engineOnline={!!link?.online}
+              engineOnline={engineOnline}
               initialScript={pickedScript}
             />
           )}
