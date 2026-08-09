@@ -191,11 +191,19 @@ export async function listEngineLabels(userId: string): Promise<EngineLabel[]> {
 }
 
 /**
- * Instagram accounts connected to the engine. Pass a labelId to load ONLY the
- * accounts assigned that custom label — much faster than loading everything.
+ * Instagram accounts connected to the engine. Pass a label to load ONLY the
+ * accounts inside it — much faster than loading everything. The usernames
+ * are sent along so filtering also works on engines this account is not
+ * logged into (code-connected guests); the labelId is kept for older builds.
  */
-export async function listEngineAccounts(userId: string, labelId?: string): Promise<EngineAccount[]> {
-  const id = await sendCommand(userId, 'list_accounts', labelId ? { labelId } : {})
+export async function listEngineAccounts(
+  userId: string,
+  label?: { id?: string; usernames?: string[] }
+): Promise<EngineAccount[]> {
+  const payload: Record<string, unknown> = {}
+  if (label?.id) payload.labelId = label.id
+  if (label?.usernames?.length) payload.usernames = label.usernames
+  const id = await sendCommand(userId, 'list_accounts', payload)
   const res = await waitForCommand(id, 90_000)
   return Array.isArray(res.accounts) ? (res.accounts as EngineAccount[]) : []
 }

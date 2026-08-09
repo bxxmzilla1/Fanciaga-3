@@ -2,11 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   enqueueScriptStack,
   listEngineAccounts,
-  listEngineLabels,
   runScriptOnEngine,
-  waitForEngineCommand,
-  type EngineLabel
+  waitForEngineCommand
 } from '../lib/engine'
+import { listMyLabels, type MyLabel } from '../lib/labels'
 import {
   parseScriptFile,
   type EngineAccount,
@@ -66,9 +65,9 @@ export default function PostingScreen(props: {
   const [error, setError] = useState<string | null>(null)
   const [accounts, setAccounts] = useState<EngineAccount[] | null>(null)
   const [accountsLoading, setAccountsLoading] = useState(false)
-  // Custom labels saved in the Fanciaga app — pick one to load ONLY its
-  // accounts (fast) instead of sweeping the whole organization.
-  const [labels, setLabels] = useState<EngineLabel[] | null>(null)
+  // Custom labels saved in YOUR Fanciaga account — read straight from the
+  // cloud (no desktop login needed), pick one to load ONLY its accounts.
+  const [labels, setLabels] = useState<MyLabel[] | null>(null)
   const [labelsLoading, setLabelsLoading] = useState(false)
   const [labelId, setLabelIdState] = useState<string>(() => {
     try {
@@ -125,7 +124,7 @@ export default function PostingScreen(props: {
   async function loadLabels(): Promise<void> {
     setLabelsLoading(true)
     try {
-      const list = await listEngineLabels(props.userId)
+      const list = await listMyLabels(props.userId)
       setLabels(list)
       // Drop a remembered label that no longer exists.
       if (labelId && !list.some((l) => l.id === labelId)) setLabelId('')
@@ -136,18 +135,28 @@ export default function PostingScreen(props: {
     }
   }
 
-  // Fetch the custom labels from the engine once it's online, so the picker
-  // is ready before the (much heavier) account load.
+  // Labels come straight from this account's cloud data — load immediately,
+  // no engine required (works for code-connected guests too).
   useEffect(() => {
-    if (props.engineOnline && labels === null && !labelsLoading) void loadLabels()
+    if (labels === null && !labelsLoading) void loadLabels()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.engineOnline])
+  }, [])
 
   async function loadAccounts(): Promise<void> {
     setAccountsLoading(true)
     setError(null)
     try {
-      setAccounts(await listEngineAccounts(props.userId, labelId || undefined))
+      // Resolve the chosen label to its usernames so the engine can filter
+      // even when this account isn't logged into it (guest mode).
+      let sel: MyLabel | null = null
+      if (labelId) {
+        const list = labels ?? (await listMyLabels(props.userId).catch(() => [] as MyLabel[]))
+        if (labels === null) setLabels(list)
+        sel = list.find((l) => l.id === labelId) || null
+      }
+      setAccounts(
+        await listEngineAccounts(props.userId, sel ? { id: sel.id, usernames: sel.usernames } : undefined)
+      )
       setSelected(new Set())
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load the accounts from the engine.')
@@ -387,9 +396,9 @@ export default function PostingScreen(props: {
               <button
                 type="button"
                 className="rounded-xl border border-white/10 px-3 py-2 text-xs text-gray-300 hover:bg-white/[0.05] disabled:opacity-50"
-                disabled={labelsLoading || !props.engineOnline}
+                disabled={labelsLoading}
                 onClick={() => void loadLabels()}
-                title="Refresh the custom labels saved in your Fanciaga app"
+                title="Refresh the custom labels saved in your Fanciaga account"
               >
                 {labelsLoading ? 'Labels…' : 'Refresh labels'}
               </button>
@@ -410,8 +419,9 @@ export default function PostingScreen(props: {
               </button>
             </div>
             <p className="mt-1.5 text-[11px] text-gray-600">
-              Pick one of the custom labels saved in your Fanciaga app to load only those Instagram
-              accounts — much faster than loading everything.
+              Pick one of the custom labels saved in your Fanciaga account to load only those
+              Instagram accounts — much faster than loading everything. Labels work even when your
+              account isn’t logged into the connected engine.
             </p>
 
             {!accounts ? (
