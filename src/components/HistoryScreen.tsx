@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { forceStopRun, listRuns, type ScriptRun } from '../lib/history'
-import { RocketIcon, StopIcon } from './Icons'
+import { forceStopRun, listRuns, retryRun, updateRun, type ScriptRun } from '../lib/history'
+import { waitForEngineCommand } from '../lib/engine'
+import { RefreshIcon, RocketIcon, StopIcon } from './Icons'
 
 // History — every script run started from the Posting section, with the
 // Instagram accounts each run targeted and how it ended.
@@ -31,6 +32,34 @@ export default function HistoryScreen(props: { userId: string }): JSX.Element {
   const [error, setError] = useState<string | null>(null)
   // Run id currently being force-stopped (disables its button).
   const [stoppingId, setStoppingId] = useState<string | null>(null)
+  // Run id currently being re-sent to the engine (disables its Retry button).
+  const [retryingId, setRetryingId] = useState<string | null>(null)
+
+  async function retry(run: ScriptRun): Promise<void> {
+    if (retryingId) return
+    setRetryingId(run.id)
+    setError(null)
+    try {
+      const { runId, commandId } = await retryRun(props.userId, run)
+      await load(true) // the new "Queued" row appears right away
+      // Track the retried run in the background: the engine picks it up (even
+      // if it's offline right now — it retries once back online) and the
+      // history row is closed out with the result.
+      void (async () => {
+        try {
+          const result = await waitForEngineCommand(commandId)
+          await updateRun(runId, result.ok ? 'done' : 'error', result.errors[0]?.error)
+        } catch (e) {
+          await updateRun(runId, 'error', e instanceof Error ? e.message : 'Retry failed.')
+        }
+        void load(true)
+      })()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not retry that run.')
+    } finally {
+      setRetryingId(null)
+    }
+  }
 
   async function forceStop(run: ScriptRun): Promise<void> {
     if (stoppingId) return
@@ -135,6 +164,17 @@ export default function HistoryScreen(props: { userId: string }): JSX.Element {
                     >
                       <StopIcon size={11} />
                       {stoppingId === r.id ? 'Stopping…' : 'Force Stop'}
+                    </button>
+                  )}
+                  {(r.status === 'done' || r.status === 'error') && (
+                    <button
+                      className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-white/10 px-2 py-1 text-[11px] font-semibold text-gray-300 transition-colors hover:bg-white/[0.06] hover:text-white disabled:opacity-50"
+                      disabled={retryingId === r.id}
+                      onClick={() => void retry(r)}
+                      title="Send this exact run to the engine again — same script, same Instagram accounts"
+                    >
+                      <RefreshIcon size={11} className={retryingId === r.id ? 'animate-spin' : undefined} />
+                      {retryingId === r.id ? 'Retrying…' : 'Retry'}
                     </button>
                   )}
                   <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${meta.cls}`}>

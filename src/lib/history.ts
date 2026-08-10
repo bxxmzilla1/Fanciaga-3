@@ -109,6 +109,68 @@ export async function listRuns(userId: string): Promise<ScriptRun[]> {
 }
 
 /**
+ * Retry a run: re-send the EXACT original command (same script, same account
+ * replacements, same target engine) as a brand-new engine command, with a new
+ * history row to track it. Works as long as the original `engine_commands`
+ * row still exists (the engine cleans finished rows up after ~24h).
+ */
+export async function retryRun(
+  userId: string,
+  run: ScriptRun
+): Promise<{ runId: string | null; commandId: string }> {
+  if (!run.commandId) {
+    throw new Error('This run is too old to retry — start it again from Posting.')
+  }
+  const { data } = await supabase
+    .from('engine_commands')
+    .select('command, payload, engine_code')
+    .eq('id', run.commandId)
+    .maybeSingle()
+  const row = data as Record<string, unknown> | null
+  if (!row || String(row.command) !== 'run_script') {
+    throw new Error(
+      'The original run data was already cleaned up — start it again from Posting.'
+    )
+  }
+  const insert: Record<string, unknown> = {
+    user_id: userId,
+    command: 'run_script',
+    payload: row.payload ?? {}
+  }
+  if (row.engine_code) insert.engine_code = row.engine_code
+  const { data: cmd, error } = await supabase
+    .from('engine_commands')
+    .insert(insert)
+    .select('id')
+    .single()
+  if (error || !cmd) {
+    throw new Error('Could not send the retry to the engine — check your connection and try again.')
+  }
+  const commandId = String(cmd.id)
+
+  // New history row for the retry (best-effort, like recordRun).
+  let runId: string | null = null
+  try {
+    const { data: rr } = await supabase
+      .from('script_runs')
+      .insert({
+        user_id: userId,
+        script_id: run.scriptId,
+        script_name: run.scriptName,
+        accounts: run.accounts,
+        status: 'queued',
+        command_id: commandId
+      })
+      .select('id')
+      .single()
+    runId = rr ? String(rr.id) : null
+  } catch {
+    runId = null
+  }
+  return { runId, commandId }
+}
+
+/**
  * Force-stop a queued or running run. Fast path: cancel the engine command
  * while it's still pending (never reaches the engine). Otherwise the engine
  * is told to abort it (or, for older rows without a command id, to stop
