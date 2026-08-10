@@ -14,7 +14,7 @@ import {
   type ScriptEntry,
   type StackedRunItem
 } from '../lib/types'
-import { recordRun, setRunCommand, updateRun } from '../lib/history'
+import { listRuns, recordRun, setRunCommand, updateRun, type ScriptRun } from '../lib/history'
 import { CheckIcon, CloseIcon, ScriptIcon } from './Icons'
 
 // Posting — load a Script, multi-select Instagram accounts to apply it to,
@@ -26,6 +26,36 @@ function accountName(ref: ScriptAccountRef): string {
 
 function igLabel(a: EngineAccount): string {
   return `@${(a.username || a.displayName || a.accountId).replace(/^@+/, '')}`
+}
+
+// ── Latest run status per Instagram account ─────────────────────────────────
+// Shown next to each name in the account picker: what happened to the LAST
+// script run that targeted it (queued / running / force stopped / failed /
+// done), when, and for which script.
+
+function runKey(name: string): string {
+  return name.trim().replace(/^@+/, '').toLowerCase()
+}
+
+function runBadge(r: ScriptRun): { label: string; cls: string } {
+  if (r.status === 'queued') return { label: 'Queued', cls: 'bg-white/[0.08] text-gray-400' }
+  if (r.status === 'running') return { label: 'Running…', cls: 'bg-accent/15 text-accent' }
+  if (r.status === 'done') return { label: 'Done', cls: 'bg-emerald-500/15 text-emerald-300' }
+  if (/^force stopped/i.test(r.error)) return { label: 'Force Stopped', cls: 'bg-orange-500/15 text-orange-300' }
+  return { label: 'Failed', cls: 'bg-red-500/15 text-red-300' }
+}
+
+function fmtRunTime(ms: number): string {
+  try {
+    return new Date(ms).toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit'
+    })
+  } catch {
+    return new Date(ms).toLocaleString()
+  }
 }
 
 /** Map every recorded script account → one target Instagram account. */
@@ -94,6 +124,35 @@ export default function PostingScreen(props: {
   const fileRef = useRef<HTMLInputElement>(null)
 
   const accountById = useMemo(() => new Map((accounts || []).map((a) => [a.accountId, a])), [accounts])
+
+  // "@username" → most recent script run that targeted it. Refreshed on a
+  // timer so the badges follow runs as they move queued → running → done.
+  const [runsByAccount, setRunsByAccount] = useState<Map<string, ScriptRun>>(new Map())
+  useEffect(() => {
+    let alive = true
+    const loadRuns = async (): Promise<void> => {
+      try {
+        const runs = await listRuns(props.userId) // newest first
+        if (!alive) return
+        const map = new Map<string, ScriptRun>()
+        for (const r of runs) {
+          for (const name of r.accounts) {
+            const key = runKey(name)
+            if (key && !map.has(key)) map.set(key, r)
+          }
+        }
+        setRunsByAccount(map)
+      } catch {
+        // history table missing — the picker just shows no badges
+      }
+    }
+    void loadRuns()
+    const t = window.setInterval(() => void loadRuns(), 15_000)
+    return () => {
+      alive = false
+      window.clearInterval(t)
+    }
+  }, [props.userId])
 
   const filtered = useMemo(() => {
     if (!accounts) return []
@@ -469,6 +528,10 @@ export default function PostingScreen(props: {
                   ) : (
                     filtered.map((a) => {
                       const checked = selected.has(a.accountId)
+                      const lastRun =
+                        runsByAccount.get(runKey(a.username || '')) ||
+                        runsByAccount.get(runKey(a.displayName || ''))
+                      const badge = lastRun ? runBadge(lastRun) : null
                       return (
                         <label
                           key={a.accountId}
@@ -485,6 +548,19 @@ export default function PostingScreen(props: {
                           <span className="truncate font-medium">{igLabel(a)}</span>
                           {a.displayName && a.displayName !== a.username && (
                             <span className="truncate text-gray-600">{a.displayName}</span>
+                          )}
+                          {lastRun && badge && (
+                            <span
+                              className="ml-auto flex shrink-0 flex-col items-end gap-0.5"
+                              title={`Last run: ${badge.label} — “${lastRun.scriptName}” · ${fmtRunTime(lastRun.doneAt ?? lastRun.createdAt)}${lastRun.error ? ` · ${lastRun.error}` : ''}`}
+                            >
+                              <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-medium ${badge.cls}`}>
+                                {badge.label}
+                              </span>
+                              <span className="max-w-40 truncate text-[9px] text-gray-600">
+                                {lastRun.scriptName} · {fmtRunTime(lastRun.doneAt ?? lastRun.createdAt)}
+                              </span>
+                            </span>
                           )}
                         </label>
                       )
