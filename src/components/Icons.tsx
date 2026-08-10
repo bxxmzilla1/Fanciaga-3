@@ -206,6 +206,15 @@ export function TrashIcon(p: IconProps): JSX.Element {
   )
 }
 
+export function KeyIcon(p: IconProps): JSX.Element {
+  return (
+    <svg {...base(p)}>
+      <circle cx="8" cy="14" r="3.5" />
+      <path d="M11 12.5L20 3.5M16.5 3.5H20v3.5M14.5 5.5l2.5 2.5" />
+    </svg>
+  )
+}
+
 export function FolderIcon(p: IconProps): JSX.Element {
   return (
     <svg {...base(p)}>

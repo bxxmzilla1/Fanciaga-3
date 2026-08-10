@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { buildGuestCredentials } from './apiKeys'
 import type { EngineAccount, RunScriptResult, ScriptAccountRef, ScriptEntry } from './types'
 
 // Bridge to the Fanciaga desktop engine, via the shared Supabase project:
@@ -156,7 +157,20 @@ async function sendCommand(
   payload: unknown,
   engineCode?: string
 ): Promise<string> {
-  const row: Record<string, unknown> = { user_id: userId, command, payload: payload ?? {} }
+  let body: Record<string, unknown> =
+    payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? { ...(payload as Record<string, unknown>) }
+      : { value: payload ?? {} }
+
+  // For posting commands, attach THIS user's Bundle.social keys + caption keys
+  // + a short-lived vault session so the engine has everything it needs even
+  // when the account isn't logged into that Fanciaga app.
+  if (command === 'list_accounts' || command === 'run_script') {
+    const guest = await buildGuestCredentials(userId).catch(() => null)
+    if (guest) body = { ...body, ...guest }
+  }
+
+  const row: Record<string, unknown> = { user_id: userId, command, payload: body }
   // Explicit code (Posting's target-engine box) wins; otherwise fall back to
   // the code used to connect (guest mode). Empty = our own engine.
   const code = normalizeEngineCode(engineCode || '') || getStoredEngineCode()
@@ -179,30 +193,6 @@ async function waitForCommand(id: string, timeoutMs: number): Promise<Record<str
     if (Date.now() > deadline) {
       throw new Error('The engine did not respond in time — make sure the Fanciaga app is open and online.')
     }
-  }
-}
-
-/**
- * Log the target engine into THIS Fanciaga account. The engine signs in with
- * the password (in the background — its active account is untouched) and
- * keeps the session, so from then on every script from this account runs
- * with its own API keys, Bundle.social keys and database. The engine scrubs
- * the password from the command row as soon as it's processed.
- */
-export async function loginEngineToMyAccount(
-  userId: string,
-  password: string,
-  engineCode?: string
-): Promise<void> {
-  const { data } = await supabase.auth.getSession()
-  const email = data.session?.user?.email?.trim().toLowerCase()
-  if (!email) throw new Error('Your Fanciaga 3 session expired — sign in again.')
-  const id = await sendCommand(userId, 'engine_login', { email, password }, engineCode)
-  const res = await waitForCommand(id, 60_000)
-  if (!res.ok) {
-    throw new Error(
-      typeof res.error === 'string' ? res.error : 'The engine could not log into your account.'
-    )
   }
 }
 
