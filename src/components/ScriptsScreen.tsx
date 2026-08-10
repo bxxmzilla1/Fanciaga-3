@@ -321,42 +321,14 @@ export default function ScriptsScreen(props: {
             label={`Unsorted (${unsortedCount})`}
             onClick={() => setTabFilter('unsorted')}
           />
-          {tabs.map((t) =>
-            renamingTabId === t.id ? (
-              <span key={t.id} className="flex items-center gap-1">
-                <input
-                  className="w-28 rounded-full border border-accent/50 bg-panel2 px-2 py-1 text-[11px] text-gray-100 outline-none"
-                  value={renamingTabValue}
-                  autoFocus
-                  disabled={tabBusy}
-                  onChange={(e) => setRenamingTabValue(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') void commitTabRename(t)
-                    if (e.key === 'Escape') setRenamingTabId(null)
-                  }}
-                />
-                <button
-                  className="rounded-full bg-accent/20 px-2 py-1 text-[10px] text-accent"
-                  disabled={tabBusy}
-                  onClick={() => void commitTabRename(t)}
-                >
-                  Save
-                </button>
-              </span>
-            ) : (
-              <TabPill
-                key={t.id}
-                active={tabFilter === t.id}
-                label={`${t.name} (${countInTab(t.id)})`}
-                onClick={() => setTabFilter(t.id)}
-                onRename={() => {
-                  setRenamingTabId(t.id)
-                  setRenamingTabValue(t.name)
-                }}
-                onDelete={() => void removeTab(t)}
-              />
-            )
-          )}
+          {tabs.map((t) => (
+            <TabPill
+              key={t.id}
+              active={tabFilter === t.id}
+              label={`${t.name} (${countInTab(t.id)})`}
+              onClick={() => setTabFilter(t.id)}
+            />
+          ))}
           {newTabOpen ? (
             <span className="flex items-center gap-1">
               <input
@@ -401,6 +373,76 @@ export default function ScriptsScreen(props: {
             </button>
           )}
         </div>
+
+        {/* Rename / delete the selected custom tab */}
+        {tabFilter !== 'all' &&
+          tabFilter !== 'unsorted' &&
+          (() => {
+            const activeTab = tabs.find((t) => t.id === tabFilter)
+            if (!activeTab) return null
+            if (renamingTabId === activeTab.id) {
+              return (
+                <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2">
+                  <span className="text-[11px] text-gray-500">Rename tab</span>
+                  <input
+                    className="min-w-0 flex-1 rounded-lg border border-accent/50 bg-panel2 px-2 py-1.5 text-xs text-gray-100 outline-none sm:max-w-xs"
+                    value={renamingTabValue}
+                    autoFocus
+                    disabled={tabBusy}
+                    onChange={(e) => setRenamingTabValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') void commitTabRename(activeTab)
+                      if (e.key === 'Escape') setRenamingTabId(null)
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="rounded-lg bg-accent/20 px-2.5 py-1.5 text-[11px] font-semibold text-accent hover:bg-accent/30 disabled:opacity-50"
+                    disabled={tabBusy}
+                    onClick={() => void commitTabRename(activeTab)}
+                  >
+                    {tabBusy ? 'Saving…' : 'Save'}
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-lg px-2.5 py-1.5 text-[11px] text-gray-500 hover:text-gray-200"
+                    disabled={tabBusy}
+                    onClick={() => setRenamingTabId(null)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )
+            }
+            return (
+              <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs">
+                <span className="text-gray-500">
+                  Tab <span className="font-medium text-gray-300">{activeTab.name}</span>
+                </span>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 rounded-lg border border-white/10 px-2.5 py-1.5 text-gray-300 hover:bg-white/[0.06] hover:text-white disabled:opacity-50"
+                  disabled={tabBusy}
+                  onClick={() => {
+                    setRenamingTabId(activeTab.id)
+                    setRenamingTabValue(activeTab.name)
+                  }}
+                >
+                  <PencilIcon size={12} />
+                  Rename
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 rounded-lg border border-red-500/30 px-2.5 py-1.5 text-red-300 hover:bg-red-500/10 disabled:opacity-50"
+                  disabled={tabBusy}
+                  onClick={() => void removeTab(activeTab)}
+                >
+                  <TrashIcon size={12} />
+                  Delete
+                </button>
+              </div>
+            )
+          })()}
 
         {/* Multi-select assign bar */}
         {selected.size > 0 && (
@@ -671,41 +713,19 @@ function TabPill(props: {
   active: boolean
   label: string
   onClick: () => void
-  onRename?: () => void
-  onDelete?: () => void
 }): JSX.Element {
   return (
-    <span
-      className={`inline-flex items-center gap-0.5 rounded-full border text-[11px] transition-colors ${
+    <button
+      type="button"
+      className={`rounded-full border px-2.5 py-1 text-[11px] transition-colors ${
         props.active
           ? 'border-accent/50 bg-accent/15 text-accent'
           : 'border-white/10 bg-white/[0.03] text-gray-400 hover:border-white/20 hover:text-gray-200'
       }`}
+      onClick={props.onClick}
     >
-      <button type="button" className="px-2.5 py-1" onClick={props.onClick}>
-        {props.label}
-      </button>
-      {props.onRename && (
-        <button
-          type="button"
-          className="rounded-full p-1 text-gray-500 hover:bg-white/10 hover:text-gray-200"
-          title="Rename tab"
-          onClick={props.onRename}
-        >
-          <PencilIcon size={10} />
-        </button>
-      )}
-      {props.onDelete && (
-        <button
-          type="button"
-          className="mr-0.5 rounded-full p-1 text-gray-500 hover:bg-red-500/10 hover:text-red-300"
-          title="Delete tab"
-          onClick={props.onDelete}
-        >
-          <CloseIcon size={10} />
-        </button>
-      )}
-    </span>
+      {props.label}
+    </button>
   )
 }
 
