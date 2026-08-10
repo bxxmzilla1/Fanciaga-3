@@ -182,6 +182,30 @@ async function waitForCommand(id: string, timeoutMs: number): Promise<Record<str
   }
 }
 
+/**
+ * Log the target engine into THIS Fanciaga account. The engine signs in with
+ * the password (in the background — its active account is untouched) and
+ * keeps the session, so from then on every script from this account runs
+ * with its own API keys, Bundle.social keys and database. The engine scrubs
+ * the password from the command row as soon as it's processed.
+ */
+export async function loginEngineToMyAccount(
+  userId: string,
+  password: string,
+  engineCode?: string
+): Promise<void> {
+  const { data } = await supabase.auth.getSession()
+  const email = data.session?.user?.email?.trim().toLowerCase()
+  if (!email) throw new Error('Your Fanciaga 3 session expired — sign in again.')
+  const id = await sendCommand(userId, 'engine_login', { email, password }, engineCode)
+  const res = await waitForCommand(id, 60_000)
+  if (!res.ok) {
+    throw new Error(
+      typeof res.error === 'string' ? res.error : 'The engine could not log into your account.'
+    )
+  }
+}
+
 /** One of the custom account labels saved in the Fanciaga app. */
 export interface EngineLabel {
   id: string

@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   enqueueScriptStack,
   fetchEngineByCode,
+  getStoredEngineCode,
   listEngineAccounts,
+  loginEngineToMyAccount,
   normalizeEngineCode,
   runScriptOnEngine,
   waitForEngineCommand,
@@ -154,6 +156,31 @@ export default function PostingScreen(props: {
   // With a target code, THAT engine's status is what matters.
   const engineReady = codeActive ? !!targetEngine?.online : props.engineOnline
   const runCode = codeActive ? cleanPostCode : undefined
+
+  // ── Log the target engine into THIS Fanciaga account ──────────────────────
+  // Sent when posting to an engine by code: the engine signs your account in
+  // (background — its own screen doesn't change) and keeps it logged in, so
+  // your scripts always run with YOUR API keys, Bundle keys and database.
+  const codeMode = codeActive || !!getStoredEngineCode()
+  const [loginPw, setLoginPw] = useState('')
+  const [loginBusy, setLoginBusy] = useState(false)
+  const [loginDone, setLoginDone] = useState(false)
+  const [loginErr, setLoginErr] = useState<string | null>(null)
+
+  async function doEngineLogin(): Promise<void> {
+    setLoginBusy(true)
+    setLoginErr(null)
+    setLoginDone(false)
+    try {
+      await loginEngineToMyAccount(props.userId, loginPw, runCode)
+      setLoginDone(true)
+      setLoginPw('')
+    } catch (e) {
+      setLoginErr(e instanceof Error ? e.message : 'The engine could not log into your account.')
+    } finally {
+      setLoginBusy(false)
+    }
+  }
 
   const accountById = useMemo(() => new Map((accounts || []).map((a) => [a.accountId, a])), [accounts])
 
@@ -473,6 +500,53 @@ export default function PostingScreen(props: {
                 )}
               </span>
             </div>
+
+            {/* Log the engine into this account so it posts with YOUR API keys
+                and data — needed once per engine when connecting by code */}
+            {codeMode && (
+              <div className="mt-3 rounded-xl border border-white/[0.06] bg-black/20 p-3">
+                <div className="text-xs font-semibold text-gray-200">
+                  Log the engine into your account
+                </div>
+                <p className="mt-0.5 text-[11px] text-gray-500">
+                  Enter your Fanciaga password once — the engine signs your account in (in the
+                  background) and keeps it logged in, so your scripts always post with your own
+                  API keys and data. The password is never stored.
+                </p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <input
+                    type="password"
+                    autoComplete="current-password"
+                    className="min-w-0 flex-1 rounded-xl border border-white/10 bg-panel2 px-3 py-2 text-xs text-gray-100 placeholder-gray-600 outline-none focus:border-accent/60"
+                    placeholder="Your Fanciaga password"
+                    value={loginPw}
+                    onChange={(e) => {
+                      setLoginPw(e.target.value)
+                      setLoginErr(null)
+                      setLoginDone(false)
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && loginPw && engineReady && !loginBusy) void doEngineLogin()
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="rounded-xl border border-accent/40 bg-accent/10 px-3 py-2 text-xs font-semibold text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
+                    disabled={loginBusy || !loginPw || !engineReady}
+                    onClick={() => void doEngineLogin()}
+                  >
+                    {loginBusy ? 'Logging engine in…' : 'Log engine into my account'}
+                  </button>
+                </div>
+                {loginDone && (
+                  <p className="mt-1.5 text-[11px] text-emerald-300">
+                    Done — the engine is logged into your account. Your scripts now run with your
+                    own API keys and database.
+                  </p>
+                )}
+                {loginErr && <p className="mt-1.5 text-[11px] text-red-300">{loginErr}</p>}
+              </div>
+            )}
 
             {/* Custom label picker — loads only the labeled accounts (fast) */}
             <div className="mt-3 flex flex-wrap items-center gap-2">
