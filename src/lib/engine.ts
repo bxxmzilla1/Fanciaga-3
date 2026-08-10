@@ -1,5 +1,4 @@
 import { supabase } from './supabase'
-import { buildGuestCredentials } from './apiKeys'
 import type { EngineAccount, RunScriptResult, ScriptAccountRef, ScriptEntry } from './types'
 
 // Bridge to the Fanciaga desktop engine, via the shared Supabase project:
@@ -157,22 +156,8 @@ async function sendCommand(
   payload: unknown,
   engineCode?: string
 ): Promise<string> {
-  let body: Record<string, unknown> =
-    payload && typeof payload === 'object' && !Array.isArray(payload)
-      ? { ...(payload as Record<string, unknown>) }
-      : { value: payload ?? {} }
-
-  // For posting commands, attach THIS user's Bundle.social keys + caption keys
-  // + a short-lived vault session so the engine has everything it needs even
-  // when the account isn't logged into that Fanciaga app.
-  if (command === 'list_accounts' || command === 'run_script') {
-    const guest = await buildGuestCredentials(userId).catch(() => null)
-    if (guest) body = { ...body, ...guest }
-  }
-
-  const row: Record<string, unknown> = { user_id: userId, command, payload: body }
-  // Explicit code (Posting's target-engine box) wins; otherwise fall back to
-  // the code used to connect (guest mode). Empty = our own engine.
+  const row: Record<string, unknown> = { user_id: userId, command, payload: payload ?? {} }
+  // Connected by code → address the command to that engine instead of our own.
   const code = normalizeEngineCode(engineCode || '') || getStoredEngineCode()
   if (code) row.engine_code = code
   const { data, error } = await supabase.from('engine_commands').insert(row).select('id').single()

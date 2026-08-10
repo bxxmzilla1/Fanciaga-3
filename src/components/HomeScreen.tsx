@@ -17,14 +17,12 @@ import PostingScreen from './PostingScreen'
 import ScriptsScreen from './ScriptsScreen'
 import ScriptCreatorScreen from './ScriptCreatorScreen'
 import HistoryScreen from './HistoryScreen'
-import ApiScreen from './ApiScreen'
 import {
   CloseIcon,
   CreatorIcon,
   FilmIcon,
   HistoryIcon,
   HomeIcon,
-  KeyIcon,
   MenuIcon,
   RocketIcon,
   ScriptIcon,
@@ -32,7 +30,7 @@ import {
   SparklesIcon
 } from './Icons'
 
-type View = 'cards' | 'posting' | 'scripts' | 'creator' | 'history' | 'api'
+type View = 'cards' | 'posting' | 'scripts' | 'creator' | 'history'
 
 const VIEW_KEY = 'f3.view'
 const NAV_OPEN_KEY = 'f3.navOpen'
@@ -40,13 +38,7 @@ const NAV_OPEN_KEY = 'f3.navOpen'
 function loadSavedView(): View {
   try {
     const v = localStorage.getItem(VIEW_KEY)
-    return v === 'posting' ||
-      v === 'scripts' ||
-      v === 'creator' ||
-      v === 'history' ||
-      v === 'api'
-      ? v
-      : 'cards'
+    return v === 'posting' || v === 'scripts' || v === 'creator' || v === 'history' ? v : 'cards'
   } catch {
     return 'cards'
   }
@@ -69,8 +61,7 @@ const NAV: Array<{ id: View; label: string; icon: ReactNode }> = [
   { id: 'posting', label: 'Posting', icon: <SendIcon size={16} /> },
   { id: 'scripts', label: 'Scripts', icon: <ScriptIcon size={16} /> },
   { id: 'creator', label: 'Script Creator', icon: <CreatorIcon size={16} /> },
-  { id: 'history', label: 'History', icon: <HistoryIcon size={16} /> },
-  { id: 'api', label: 'API', icon: <KeyIcon size={16} /> }
+  { id: 'history', label: 'History', icon: <HistoryIcon size={16} /> }
 ]
 
 const CARDS: Array<{
@@ -405,8 +396,6 @@ export default function HomeScreen(props: {
             <ScriptCreatorScreen userId={props.userId} onSaved={() => setView('scripts')} />
           ) : view === 'history' ? (
             <HistoryScreen userId={props.userId} />
-          ) : view === 'api' ? (
-            <ApiScreen userId={props.userId} />
           ) : (
             <PostingScreen
               key={pickedScript?.id || 'default'}

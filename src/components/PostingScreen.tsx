@@ -1,12 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   enqueueScriptStack,
-  fetchEngineByCode,
   listEngineAccounts,
-  normalizeEngineCode,
   runScriptOnEngine,
-  waitForEngineCommand,
-  type CodeEngine
+  waitForEngineCommand
 } from '../lib/engine'
 import { listMyLabels, type MyLabel } from '../lib/labels'
 import {
@@ -57,8 +54,6 @@ function replacementsForTarget(
 
 // Remember the chosen custom label across refreshes.
 const LABEL_KEY = 'f3.labelId'
-// Remember the target engine code typed in the Posting section.
-const POST_CODE_KEY = 'f3.postEngineCode'
 
 export default function PostingScreen(props: {
   userId: string
@@ -97,63 +92,6 @@ export default function PostingScreen(props: {
   const [stack, setStack] = useState<StackedRunItem[]>([])
   const [singleResult, setSingleResult] = useState<RunScriptResult | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
-
-  // Optional target engine code — sends everything to THAT engine, whether or
-  // not this Fanciaga account is logged into it. Empty = the connected engine.
-  const [postCode, setPostCodeState] = useState<string>(() => {
-    try {
-      return localStorage.getItem(POST_CODE_KEY) || ''
-    } catch {
-      return ''
-    }
-  })
-  const [targetEngine, setTargetEngine] = useState<CodeEngine | null>(null)
-  const [targetChecking, setTargetChecking] = useState(false)
-
-  function setPostCode(v: string): void {
-    setPostCodeState(v)
-    try {
-      if (v.trim()) localStorage.setItem(POST_CODE_KEY, v)
-      else localStorage.removeItem(POST_CODE_KEY)
-    } catch {
-      // storage unavailable
-    }
-  }
-
-  const cleanPostCode = normalizeEngineCode(postCode)
-  const codeActive = cleanPostCode.length >= 7 // "XXX-XXX"
-
-  // Live status check for the typed engine code (debounced).
-  useEffect(() => {
-    if (!codeActive) {
-      setTargetEngine(null)
-      setTargetChecking(false)
-      return
-    }
-    let alive = true
-    setTargetChecking(true)
-    const t = window.setTimeout(() => {
-      void fetchEngineByCode(cleanPostCode)
-        .then((e) => {
-          if (!alive) return
-          setTargetEngine(e)
-          setTargetChecking(false)
-        })
-        .catch(() => {
-          if (!alive) return
-          setTargetEngine(null)
-          setTargetChecking(false)
-        })
-    }, 500)
-    return () => {
-      alive = false
-      window.clearTimeout(t)
-    }
-  }, [cleanPostCode, codeActive])
-
-  // With a target code, THAT engine's status is what matters.
-  const engineReady = codeActive ? !!targetEngine?.online : props.engineOnline
-  const runCode = codeActive ? cleanPostCode : undefined
 
   const accountById = useMemo(() => new Map((accounts || []).map((a) => [a.accountId, a])), [accounts])
 
@@ -219,8 +157,7 @@ export default function PostingScreen(props: {
       setAccounts(
         await listEngineAccounts(
           props.userId,
-          sel ? { id: sel.id, usernames: sel.usernames } : undefined,
-          runCode
+          sel ? { id: sel.id, usernames: sel.usernames } : undefined
         )
       )
       setSelected(new Set())
@@ -281,8 +218,7 @@ export default function PostingScreen(props: {
             props.userId,
             script,
             script.replacements || {},
-            (cid) => void setRunCommand(runId, cid),
-            runCode
+            (cid) => void setRunCommand(runId, cid)
           )
           setSingleResult(result)
           void updateRun(runId, result.ok ? 'done' : 'error', result.errors[0]?.error)
@@ -308,7 +244,7 @@ export default function PostingScreen(props: {
         targets.map((t) => recordRun(props.userId, script, [igLabel(t)]))
       )
 
-      const commandIds = await enqueueScriptStack(props.userId, script, runs, runCode)
+      const commandIds = await enqueueScriptStack(props.userId, script, runs)
       // Link each history row to its engine command so Force Stop can target it.
       commandIds.forEach((cid, i) => void setRunCommand(runIds[i], cid))
 
@@ -442,38 +378,6 @@ export default function PostingScreen(props: {
               </p>
             </div>
 
-            {/* Target engine (optional) — send to ANY engine by its code, no
-                matter which Fanciaga account is logged into it */}
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <input
-                className="w-36 rounded-xl border border-white/10 bg-panel2 px-3 py-2 text-center font-mono text-xs uppercase tracking-[0.2em] text-gray-100 placeholder:font-sans placeholder:normal-case placeholder:tracking-normal placeholder:text-gray-600 focus:border-accent/60 focus:outline-none"
-                placeholder="Engine code"
-                value={postCode}
-                maxLength={8}
-                onChange={(e) => setPostCode(e.target.value.toUpperCase())}
-              />
-              <span className="text-[11px] text-gray-500">
-                {!postCode.trim() ? (
-                  'Optional — leave empty to use your connected engine.'
-                ) : !codeActive ? (
-                  'Keep typing — codes look like 7QK-3DM.'
-                ) : targetChecking ? (
-                  'Checking that engine…'
-                ) : targetEngine?.online ? (
-                  <span className="text-emerald-300">
-                    Engine {cleanPostCode}
-                    {targetEngine.name ? ` (${targetEngine.name})` : ''} is online — scripts go there.
-                  </span>
-                ) : targetEngine ? (
-                  <span className="text-amber-300">
-                    Engine {cleanPostCode} is offline — open that Fanciaga app.
-                  </span>
-                ) : (
-                  <span className="text-red-300">No engine found with code {cleanPostCode}.</span>
-                )}
-              </span>
-            </div>
-
             {/* Custom label picker — loads only the labeled accounts (fast) */}
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <select
@@ -506,7 +410,7 @@ export default function PostingScreen(props: {
               </button>
               <button
                 className="rounded-xl border border-white/10 px-3 py-2 text-xs text-gray-300 transition-colors hover:bg-white/[0.05] hover:text-white disabled:opacity-50"
-                disabled={accountsLoading || !engineReady}
+                disabled={accountsLoading || !props.engineOnline}
                 onClick={() => void loadAccounts()}
               >
                 {accountsLoading
@@ -601,17 +505,15 @@ export default function PostingScreen(props: {
           {/* Run */}
           <button
             className="rounded-2xl bg-accent px-4 py-3.5 text-sm font-semibold text-white shadow-glow transition-transform hover:scale-[1.01] disabled:opacity-50"
-            disabled={running || !engineReady}
+            disabled={running || !props.engineOnline}
             onClick={() => void run()}
           >
             {running
               ? selectedCount > 0
                 ? `Stacking on engine… (${stackDone + stackFailed}/${selectedCount})`
-                : 'Running on the engine…'
-              : !engineReady
-                ? codeActive
-                  ? `Engine ${cleanPostCode} offline — open that Fanciaga app first`
-                  : 'Engine offline — open the Fanciaga app first'
+                : 'Running on your engine…'
+              : !props.engineOnline
+                ? 'Engine offline — open the Fanciaga app first'
                 : selectedCount > 0
                   ? `Run script on ${selectedCount} account${selectedCount === 1 ? '' : 's'} (stacked)`
                   : 'Run Script once (no accounts selected)'}
