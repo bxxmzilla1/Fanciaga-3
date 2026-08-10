@@ -43,8 +43,11 @@ const TEMPLATE_REF: ScriptAccountRef = {
 interface CreatorSlot {
   key: string
   item: VaultItem
-  /** How long AFTER the script runs this slot posts (ms). */
-  offsetMs: number
+  /**
+   * Wait BEFORE this post (ms) — after the previous post, or after the script
+   * runs for the first slot. Same semantics as the Scripts Preview sidebar.
+   */
+  waitMs: number
   /** Optional image merged as a 0.5s intro before the video. */
   thumb: VaultItem | null
 }
@@ -52,8 +55,8 @@ interface CreatorSlot {
 /** What the right sidebar is showing: the videos, or a thumbnail pick. */
 type SidebarMode = { kind: 'videos' } | { kind: 'thumb'; slotKey: string; slotNumber: number }
 
-// All times in the creator are RELATIVE (days + hours + minutes after the run
-// starts) — no dates to pick. When the engine runs the script it anchors the
+// All times in the creator are RELATIVE waits between posts (days + hours +
+// minutes) — no dates to pick. When the engine runs the script it anchors the
 // whole batch at that moment, keeping every gap exactly as entered.
 
 const DAY_MS = 24 * 60 * 60_000
@@ -68,14 +71,19 @@ function msToDur(ms: number): { d: number; h: number; m: number } {
   return { d, h, m }
 }
 
-function fmtOffset(ms: number): string {
-  if (ms <= 0) return 'at run time'
+function fmtDur(ms: number): string {
   const { d, h, m } = msToDur(ms)
   const parts: string[] = []
   if (d) parts.push(`${d}d`)
   if (h) parts.push(`${h}h`)
   if (m) parts.push(`${m}m`)
-  return `+${parts.join(' ') || '0m'} after run`
+  return parts.join(' ') || '0m'
+}
+
+/** "posts +2h 30m after run" — the cumulative offset shown next to each wait. */
+function fmtOffset(cumulativeMs: number): string {
+  if (cumulativeMs <= 0) return 'posts at run time'
+  return `posts +${fmtDur(cumulativeMs)} after run`
 }
 
 /** Three little number boxes — days, hours, minutes — bound to a ms value. */
@@ -140,6 +148,12 @@ export default function ScriptCreatorScreen(props: {
   const [firstOffsetMs, setFirstOffsetMs] = useState(10 * MIN_MS)
   const [gapMs, setGapMs] = useState(HOUR_MS)
 
+  // Running total of the waits — "posts +2h after run" label per slot.
+  const cumulativeOffsets = useMemo(() => {
+    let t = 0
+    return slots.map((s) => (t += Math.max(0, s.waitMs)))
+  }, [slots])
+
   function openVaultMode(mode: SidebarMode): void {
     setSidebarMode(mode)
     setVaultOpen(true)
@@ -199,16 +213,16 @@ export default function ScriptCreatorScreen(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupId])
 
-  function nextSlotOffset(): number {
-    if (slots.length === 0) return firstOffsetMs
-    return slots[slots.length - 1].offsetMs + Math.max(MIN_MS, gapMs)
-  }
-
   function addVideo(item: VaultItem): void {
     setSavedMsg('')
     setSlots((prev) => [
       ...prev,
-      { key: crypto.randomUUID(), item, offsetMs: nextSlotOffset(), thumb: null }
+      {
+        key: crypto.randomUUID(),
+        item,
+        waitMs: prev.length === 0 ? firstOffsetMs : Math.max(MIN_MS, gapMs),
+        thumb: null
+      }
     ])
   }
 
@@ -236,7 +250,7 @@ export default function ScriptCreatorScreen(props: {
   function applySchedule(): void {
     setError(null)
     const gap = Math.max(MIN_MS, gapMs)
-    setSlots((prev) => prev.map((s, i) => ({ ...s, offsetMs: firstOffsetMs + i * gap })))
+    setSlots((prev) => prev.map((s, i) => ({ ...s, waitMs: i === 0 ? firstOffsetMs : gap })))
   }
 
   async function save(): Promise<void> {
@@ -252,24 +266,27 @@ export default function ScriptCreatorScreen(props: {
     setSaving(true)
     setError(null)
     try {
-      // Slots post in offset order — same shape the desktop Striker logs. The
-      // offsets are stored as absolute times anchored at save; the engine
-      // re-anchors the whole batch when the script actually runs, so only the
-      // days/hours/minutes gaps entered here matter.
+      // Slots post in list order — same shape the desktop Striker logs. The
+      // per-post waits are summed into absolute times anchored at save; the
+      // engine re-anchors the whole batch when the script actually runs, so
+      // only the days/hours/minutes gaps entered here matter.
       const base = Date.now()
-      const ordered = [...slots].sort((a, b) => a.offsetMs - b.offsetMs)
-      const strikerSlots = ordered.map((s, i) => ({
-        accountId: TEMPLATE_REF.accountId,
-        keyId: TEMPLATE_REF.keyId,
-        slot: ((i % 3) + 1) as 1 | 2 | 3,
-        source: 'group' as const,
-        groupId: s.item.groupId,
-        itemId: s.item.id,
-        scheduledFor: new Date(base + s.offsetMs).toISOString(),
-        ...(s.thumb
-          ? { thumbnail: { source: 'group' as const, groupId: s.thumb.groupId, itemId: s.thumb.id } }
-          : {})
-      }))
+      let cumulative = 0
+      const strikerSlots = slots.map((s, i) => {
+        cumulative += Math.max(0, s.waitMs)
+        return {
+          accountId: TEMPLATE_REF.accountId,
+          keyId: TEMPLATE_REF.keyId,
+          slot: ((i % 3) + 1) as 1 | 2 | 3,
+          source: 'group' as const,
+          groupId: s.item.groupId,
+          itemId: s.item.id,
+          scheduledFor: new Date(base + cumulative).toISOString(),
+          ...(s.thumb
+            ? { thumbnail: { source: 'group' as const, groupId: s.thumb.groupId, itemId: s.thumb.id } }
+            : {})
+        }
+      })
       const entry: ScriptEntry = {
         id: crypto.randomUUID(),
         name: clean,
@@ -367,8 +384,8 @@ export default function ScriptCreatorScreen(props: {
                 {slots.length > 0 && <span className="text-gray-500">({slots.length})</span>}
               </div>
               <p className="mt-0.5 text-xs text-gray-500">
-                Times are days/hours/minutes after the script runs. Pick an optional thumbnail
-                image per post.
+                Each time is the wait BEFORE that post — after the previous one (the first waits
+                from the script run). Pick an optional thumbnail image per post.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -380,7 +397,7 @@ export default function ScriptCreatorScreen(props: {
                 className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-gray-300 hover:bg-white/[0.05] disabled:opacity-50"
                 disabled={slots.length === 0}
                 onClick={applySchedule}
-                title="Re-space every post: first after the delay, then one per interval"
+                title="Set every wait at once: the first post waits the delay, each next post waits the interval"
               >
                 Apply times
               </button>
@@ -414,16 +431,19 @@ export default function ScriptCreatorScreen(props: {
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-xs font-medium text-gray-200">{s.item.title}</div>
                     <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <span className="text-[10px] text-gray-500">
+                        {i === 0 ? 'wait after run' : 'wait'}
+                      </span>
                       <DurInputs
                         compact
-                        valueMs={s.offsetMs}
+                        valueMs={s.waitMs}
                         onChange={(ms) =>
                           setSlots((prev) =>
-                            prev.map((x) => (x.key === s.key ? { ...x, offsetMs: ms } : x))
+                            prev.map((x) => (x.key === s.key ? { ...x, waitMs: ms } : x))
                           )
                         }
                       />
-                      <span className="text-[10px] text-gray-600">{fmtOffset(s.offsetMs)}</span>
+                      <span className="text-[10px] text-gray-600">{fmtOffset(cumulativeOffsets[i])}</span>
                       <button
                         className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] transition-colors ${
                           sidebarMode.kind === 'thumb' && sidebarMode.slotKey === s.key
