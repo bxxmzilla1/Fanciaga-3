@@ -502,22 +502,27 @@ export default function PostingScreen(props: {
             )}
           </div>
 
-          {/* Run */}
+          {/* Run — allowed even while the engine is offline: the runs queue in
+              the cloud and start automatically the moment the engine is back. */}
           <button
             className="rounded-2xl bg-accent px-4 py-3.5 text-sm font-semibold text-white shadow-glow transition-transform hover:scale-[1.01] disabled:opacity-50"
-            disabled={running || !props.engineOnline}
+            disabled={running}
             onClick={() => void run()}
           >
             {running
               ? selectedCount > 0
                 ? `Stacking on engine… (${stackDone + stackFailed}/${selectedCount})`
                 : 'Running on your engine…'
-              : !props.engineOnline
-                ? 'Engine offline — open the Fanciaga app first'
-                : selectedCount > 0
-                  ? `Run script on ${selectedCount} account${selectedCount === 1 ? '' : 's'} (stacked)`
-                  : 'Run Script once (no accounts selected)'}
+              : selectedCount > 0
+                ? `Run script on ${selectedCount} account${selectedCount === 1 ? '' : 's'} (stacked)`
+                : 'Run Script once (no accounts selected)'}
           </button>
+          {!props.engineOnline && (
+            <p className="-mt-2 text-center text-[11px] text-amber-300/90">
+              Engine offline — runs will queue and start automatically as soon as the Fanciaga app
+              reconnects.
+            </p>
+          )}
         </>
       )}
 

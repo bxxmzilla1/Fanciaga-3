@@ -153,7 +153,9 @@ export default function HomeScreen(props: {
       if (l && !l.pwaConnected) props.onUnpaired()
     }
     void check()
-    const t = window.setInterval(() => void check(), 10_000)
+    // The engine heartbeats every second — check often so an open app is
+    // always shown as online/available with barely any lag.
+    const t = window.setInterval(() => void check(), 5_000)
     return () => {
       alive = false
       window.clearInterval(t)

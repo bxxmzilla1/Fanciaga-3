@@ -7,8 +7,9 @@ import type { EngineAccount, RunScriptResult, ScriptAccountRef, ScriptEntry } fr
 //   • `engine_commands` — we insert a command row; the engine polls, executes
 //     it, and writes the result back for us to read.
 
-// The engine heartbeats every ~8s; allow a little slack.
-const ONLINE_WINDOW_MS = 30_000
+// The engine heartbeats every second; 15s of slack covers network blips
+// without ever showing an open app as offline.
+const ONLINE_WINDOW_MS = 15_000
 
 // ── Connect by engine code (guest mode) ─────────────────────────────────────
 // A Fanciaga 3 user can connect to ANY engine with the short code shown in
@@ -181,6 +182,40 @@ async function waitForCommand(id: string, timeoutMs: number): Promise<Record<str
   }
 }
 
+/**
+ * Wait for a `run_script` command with NO wall-clock timeout: the row stays
+ * `pending` in Supabase until an engine claims it, so a long queue (several
+ * people stacking scripts on the same engine) or an offline engine is not a
+ * failure — the run simply starts once the engine picks it up. The wait only
+ * ends when the command finishes, errors, or the row disappears entirely.
+ */
+async function waitForCommandUntilDone(id: string): Promise<Record<string, unknown>> {
+  let missing = 0
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 3_000))
+    const { data, error } = await supabase
+      .from('engine_commands')
+      .select('status, result')
+      .eq('id', id)
+      .maybeSingle()
+    if (error) continue // transient network blip — keep waiting
+    if (!data) {
+      // Row gone (cleaned up / force-deleted). Tolerate a couple of misses in
+      // case of read-after-write lag, then give up.
+      if (++missing >= 3) throw new Error('This run was removed before the engine could process it.')
+      continue
+    }
+    missing = 0
+    if (data.status === 'done') return (data.result ?? {}) as Record<string, unknown>
+    if (data.status === 'error') {
+      const res = (data.result ?? {}) as Record<string, unknown>
+      throw new Error(typeof res.error === 'string' ? res.error : 'The engine reported an error.')
+    }
+    // 'pending' (queued / engine offline — it will retry when back online) or
+    // 'running' — keep waiting.
+  }
+}
+
 /** One of the custom account labels saved in the Fanciaga app. */
 export interface EngineLabel {
   id: string
@@ -224,7 +259,7 @@ export async function runScriptOnEngine(
 ): Promise<RunScriptResult> {
   const id = await sendCommand(userId, 'run_script', { script, replacements }, engineCode)
   onCommandId?.(id)
-  const res = await waitForCommand(id, 10 * 60_000)
+  const res = await waitForCommandUntilDone(id)
   return {
     ok: !!res.ok,
     started: Array.isArray(res.started) ? (res.started as RunScriptResult['started']) : [],
@@ -286,9 +321,13 @@ export async function enqueueScriptStack(
   return ids
 }
 
-/** Wait for one previously-enqueued engine command to finish. */
-export async function waitForEngineCommand(id: string, timeoutMs = 10 * 60_000): Promise<RunScriptResult> {
-  const res = await waitForCommand(id, timeoutMs)
+/**
+ * Wait for one previously-enqueued engine command to finish. Never gives up on
+ * the clock: queued runs behind other people's scripts, or runs waiting for an
+ * offline engine to reconnect, resolve whenever the engine gets to them.
+ */
+export async function waitForEngineCommand(id: string): Promise<RunScriptResult> {
+  const res = await waitForCommandUntilDone(id)
   return {
     ok: !!res.ok,
     started: Array.isArray(res.started) ? (res.started as RunScriptResult['started']) : [],
