@@ -111,8 +111,9 @@ export async function listRuns(userId: string): Promise<ScriptRun[]> {
 /**
  * Retry a run: re-send the EXACT original command (same script, same account
  * replacements, same target engine) as a brand-new engine command, with a new
- * history row to track it. Works as long as the original `engine_commands`
- * row still exists (the engine cleans finished rows up after ~24h).
+ * history row to track it. The old history row is deleted — the retry
+ * REPLACES it, so History never shows both. Works as long as the original
+ * `engine_commands` row still exists (the engine cleans them up after ~24h).
  */
 export async function retryRun(
   userId: string,
@@ -166,6 +167,15 @@ export async function retryRun(
     runId = rr ? String(rr.id) : null
   } catch {
     runId = null
+  }
+
+  // The retry replaces the old run — drop its history row so the section
+  // shows a single entry per script run. Only after the new row exists, so a
+  // failed retry never loses the original record.
+  try {
+    await supabase.from('script_runs').delete().eq('id', run.id)
+  } catch {
+    // best-effort — worst case the old row lingers alongside the retry
   }
   return { runId, commandId }
 }

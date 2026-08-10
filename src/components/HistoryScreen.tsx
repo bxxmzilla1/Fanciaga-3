@@ -171,7 +171,7 @@ export default function HistoryScreen(props: { userId: string }): JSX.Element {
                       className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-white/10 px-2 py-1 text-[11px] font-semibold text-gray-300 transition-colors hover:bg-white/[0.06] hover:text-white disabled:opacity-50"
                       disabled={retryingId === r.id}
                       onClick={() => void retry(r)}
-                      title="Send this exact run to the engine again — same script, same Instagram accounts"
+                      title="Send this exact run to the engine again — same script, same Instagram accounts. Replaces this entry with the new run."
                     >
                       <RefreshIcon size={11} className={retryingId === r.id ? 'animate-spin' : undefined} />
                       {retryingId === r.id ? 'Retrying…' : 'Retry'}
