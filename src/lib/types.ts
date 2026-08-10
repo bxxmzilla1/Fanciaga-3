@@ -23,6 +23,8 @@ export interface ScriptEntry {
   actions: ScriptAction[]
   accounts: ScriptAccountRef[]
   replacements: Record<string, ScriptAccountRef>
+  /** Scripts section tab (null / missing = unsorted). */
+  tabId?: string | null
 }
 
 // The `.fanciaga-script.json` file exported from the desktop Scripts section.
@@ -78,7 +80,8 @@ export function scriptRowToEntry(r: Record<string, unknown>): ScriptEntry {
     createdAt: r.created_at ? new Date(String(r.created_at)).getTime() : Date.now(),
     actions: Array.isArray(r.actions) ? (r.actions as ScriptAction[]) : [],
     accounts: list,
-    replacements
+    replacements,
+    tabId: r.tab_id ? String(r.tab_id) : null
   }
 }
 

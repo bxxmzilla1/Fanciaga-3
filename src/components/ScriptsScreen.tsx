@@ -1,5 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { deleteScript, listScripts, renameScript } from '../lib/scripts'
+import {
+  assignScriptsToTab,
+  createScriptTab,
+  deleteScript,
+  deleteScriptTab,
+  listScriptTabs,
+  listScripts,
+  renameScript,
+  renameScriptTab,
+  type ScriptTab
+} from '../lib/scripts'
 import { loadScriptPreview, saveScriptSchedule, signMediaUrl, type PreviewVideo } from '../lib/preview'
 import type { ScriptAccountRef, ScriptEntry } from '../lib/types'
 import {
@@ -13,6 +23,9 @@ import {
   StopIcon,
   TrashIcon
 } from './Icons'
+
+type TabFilter = 'all' | 'unsorted' | string
+const TAB_FILTER_KEY = 'f3.scriptsTab'
 
 // Scripts — every script recorded by the Script Writter in the connected
 // Fanciaga account, straight from the cloud. Pick one to use it in Posting
@@ -47,6 +60,7 @@ export default function ScriptsScreen(props: {
   onUseInPosting: (script: ScriptEntry) => void
 }): JSX.Element {
   const [scripts, setScripts] = useState<ScriptEntry[] | null>(null)
+  const [tabs, setTabs] = useState<ScriptTab[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<string | null>(null)
@@ -60,6 +74,48 @@ export default function ScriptsScreen(props: {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [deleteBusy, setDeleteBusy] = useState(false)
 
+  // Tab sections + multi-select assign.
+  const [tabFilter, setTabFilterState] = useState<TabFilter>(() => {
+    try {
+      return (localStorage.getItem(TAB_FILTER_KEY) as TabFilter) || 'all'
+    } catch {
+      return 'all'
+    }
+  })
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [assignBusy, setAssignBusy] = useState(false)
+  const [newTabOpen, setNewTabOpen] = useState(false)
+  const [newTabName, setNewTabName] = useState('')
+  const [tabBusy, setTabBusy] = useState(false)
+  const [renamingTabId, setRenamingTabId] = useState<string | null>(null)
+  const [renamingTabValue, setRenamingTabValue] = useState('')
+
+  function setTabFilter(f: TabFilter): void {
+    setTabFilterState(f)
+    setSelected(new Set())
+    try {
+      localStorage.setItem(TAB_FILTER_KEY, f)
+    } catch {
+      // ignore
+    }
+  }
+
+  const filtered = useMemo(() => {
+    if (!scripts) return []
+    if (tabFilter === 'all') return scripts
+    if (tabFilter === 'unsorted') return scripts.filter((s) => !s.tabId)
+    return scripts.filter((s) => s.tabId === tabFilter)
+  }, [scripts, tabFilter])
+
+  const unsortedCount = useMemo(
+    () => (scripts || []).filter((s) => !s.tabId).length,
+    [scripts]
+  )
+
+  function countInTab(tabId: string): number {
+    return (scripts || []).filter((s) => s.tabId === tabId).length
+  }
+
   async function commitDelete(s: ScriptEntry): Promise<void> {
     if (deleteBusy) return
     setDeleteBusy(true)
@@ -67,6 +123,11 @@ export default function ScriptsScreen(props: {
     try {
       await deleteScript(s.id)
       setScripts((prev) => (prev || []).filter((x) => x.id !== s.id))
+      setSelected((prev) => {
+        const next = new Set(prev)
+        next.delete(s.id)
+        return next
+      })
       setConfirmDeleteId(null)
       if (expanded === s.id) setExpanded(null)
       setPreviewing((prev) => (prev?.id === s.id ? null : prev))
@@ -101,7 +162,20 @@ export default function ScriptsScreen(props: {
     setLoading(true)
     setError(null)
     try {
-      setScripts(await listScripts(props.userId))
+      const [list, tabList] = await Promise.all([
+        listScripts(props.userId),
+        listScriptTabs(props.userId).catch(() => [] as ScriptTab[])
+      ])
+      setScripts(list)
+      setTabs(tabList)
+      // Drop a remembered tab that no longer exists.
+      if (
+        tabFilter !== 'all' &&
+        tabFilter !== 'unsorted' &&
+        !tabList.some((t) => t.id === tabFilter)
+      ) {
+        setTabFilter('all')
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load your scripts.')
     } finally {
@@ -114,13 +188,106 @@ export default function ScriptsScreen(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.userId])
 
+  function toggleSelect(id: string): void {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function selectAllFiltered(): void {
+    setSelected(new Set(filtered.map((s) => s.id)))
+  }
+
+  async function moveSelected(tabId: string | null): Promise<void> {
+    const ids = [...selected]
+    if (!ids.length || assignBusy) return
+    setAssignBusy(true)
+    setError(null)
+    try {
+      await assignScriptsToTab(props.userId, ids, tabId)
+      setScripts((prev) =>
+        (prev || []).map((s) => (ids.includes(s.id) ? { ...s, tabId } : s))
+      )
+      setSelected(new Set())
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not move those scripts.')
+    } finally {
+      setAssignBusy(false)
+    }
+  }
+
+  async function addTab(): Promise<void> {
+    if (tabBusy) return
+    setTabBusy(true)
+    setError(null)
+    try {
+      const t = await createScriptTab(props.userId, newTabName)
+      setTabs((prev) => [...prev, t])
+      setNewTabName('')
+      setNewTabOpen(false)
+      setTabFilter(t.id)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not create the tab.')
+    } finally {
+      setTabBusy(false)
+    }
+  }
+
+  async function commitTabRename(tab: ScriptTab): Promise<void> {
+    const clean = renamingTabValue.trim()
+    if (tabBusy) return
+    if (!clean || clean === tab.name) {
+      setRenamingTabId(null)
+      return
+    }
+    setTabBusy(true)
+    setError(null)
+    try {
+      await renameScriptTab(tab.id, clean)
+      setTabs((prev) => prev.map((t) => (t.id === tab.id ? { ...t, name: clean } : t)))
+      setRenamingTabId(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not rename the tab.')
+    } finally {
+      setTabBusy(false)
+    }
+  }
+
+  async function removeTab(tab: ScriptTab): Promise<void> {
+    if (tabBusy) return
+    if (!window.confirm(`Delete tab “${tab.name}”? Scripts inside it move back to Unsorted.`)) return
+    setTabBusy(true)
+    setError(null)
+    try {
+      await deleteScriptTab(props.userId, tab.id)
+      setTabs((prev) => prev.filter((t) => t.id !== tab.id))
+      setScripts((prev) =>
+        (prev || []).map((s) => (s.tabId === tab.id ? { ...s, tabId: null } : s))
+      )
+      if (tabFilter === tab.id) setTabFilter('all')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not delete the tab.')
+    } finally {
+      setTabBusy(false)
+    }
+  }
+
+  const tabLabel = (id: string | null | undefined): string => {
+    if (!id) return 'Unsorted'
+    return tabs.find((t) => t.id === id)?.name || 'Tab'
+  }
+
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h1 className="text-lg font-semibold text-gray-100">Scripts</h1>
           <p className="mt-1 text-sm text-gray-500">
-            Everything you recorded with the Script Writter in your Fanciaga app.
+            Everything you recorded with the Script Writter in your Fanciaga app. Organise them into
+            tabs and multi-select to move several at once.
           </p>
         </div>
         <button
@@ -141,6 +308,146 @@ export default function ScriptsScreen(props: {
         </div>
       )}
 
+      {/* Tab sections */}
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <TabPill
+            active={tabFilter === 'all'}
+            label={`All (${scripts?.length ?? 0})`}
+            onClick={() => setTabFilter('all')}
+          />
+          <TabPill
+            active={tabFilter === 'unsorted'}
+            label={`Unsorted (${unsortedCount})`}
+            onClick={() => setTabFilter('unsorted')}
+          />
+          {tabs.map((t) =>
+            renamingTabId === t.id ? (
+              <span key={t.id} className="flex items-center gap-1">
+                <input
+                  className="w-28 rounded-full border border-accent/50 bg-panel2 px-2 py-1 text-[11px] text-gray-100 outline-none"
+                  value={renamingTabValue}
+                  autoFocus
+                  disabled={tabBusy}
+                  onChange={(e) => setRenamingTabValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void commitTabRename(t)
+                    if (e.key === 'Escape') setRenamingTabId(null)
+                  }}
+                />
+                <button
+                  className="rounded-full bg-accent/20 px-2 py-1 text-[10px] text-accent"
+                  disabled={tabBusy}
+                  onClick={() => void commitTabRename(t)}
+                >
+                  Save
+                </button>
+              </span>
+            ) : (
+              <TabPill
+                key={t.id}
+                active={tabFilter === t.id}
+                label={`${t.name} (${countInTab(t.id)})`}
+                onClick={() => setTabFilter(t.id)}
+                onRename={() => {
+                  setRenamingTabId(t.id)
+                  setRenamingTabValue(t.name)
+                }}
+                onDelete={() => void removeTab(t)}
+              />
+            )
+          )}
+          {newTabOpen ? (
+            <span className="flex items-center gap-1">
+              <input
+                className="w-28 rounded-full border border-white/15 bg-panel2 px-2 py-1 text-[11px] text-gray-100 outline-none focus:border-accent/50"
+                placeholder="Tab name"
+                value={newTabName}
+                autoFocus
+                disabled={tabBusy}
+                onChange={(e) => setNewTabName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void addTab()
+                  if (e.key === 'Escape') {
+                    setNewTabOpen(false)
+                    setNewTabName('')
+                  }
+                }}
+              />
+              <button
+                className="rounded-full bg-accent px-2.5 py-1 text-[10px] font-semibold text-white disabled:opacity-50"
+                disabled={tabBusy}
+                onClick={() => void addTab()}
+              >
+                Add
+              </button>
+              <button
+                className="rounded-full px-2 py-1 text-[10px] text-gray-500"
+                onClick={() => {
+                  setNewTabOpen(false)
+                  setNewTabName('')
+                }}
+              >
+                Cancel
+              </button>
+            </span>
+          ) : (
+            <button
+              type="button"
+              className="rounded-full border border-dashed border-white/15 px-2.5 py-1 text-[11px] text-gray-400 hover:border-accent/40 hover:text-accent"
+              onClick={() => setNewTabOpen(true)}
+            >
+              + New tab
+            </button>
+          )}
+        </div>
+
+        {/* Multi-select assign bar */}
+        {selected.size > 0 && (
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-accent/30 bg-accent/10 px-3 py-2 text-xs text-gray-200">
+            <span className="font-medium text-accent">{selected.size} selected</span>
+            <button
+              type="button"
+              className="rounded-lg px-2 py-1 text-gray-400 hover:text-white"
+              onClick={selectAllFiltered}
+            >
+              Select all in tab
+            </button>
+            <button
+              type="button"
+              className="rounded-lg px-2 py-1 text-gray-400 hover:text-white"
+              onClick={() => setSelected(new Set())}
+            >
+              Clear
+            </button>
+            <span className="hidden text-gray-600 sm:inline">·</span>
+            <span className="text-gray-500">Move to</span>
+            <select
+              className="rounded-lg border border-white/10 bg-panel2 px-2 py-1 text-xs text-gray-100 outline-none disabled:opacity-50"
+              disabled={assignBusy}
+              defaultValue=""
+              onChange={(e) => {
+                const v = e.target.value
+                if (v === '') return
+                void moveSelected(v === '__unsorted__' ? null : v)
+                e.target.value = ''
+              }}
+            >
+              <option value="" disabled>
+                Choose tab…
+              </option>
+              <option value="__unsorted__">Unsorted</option>
+              {tabs.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+            {assignBusy && <span className="text-gray-500">Moving…</span>}
+          </div>
+        )}
+      </div>
+
       {scripts === null && !error ? (
         <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-8 text-center text-sm text-gray-500">
           Loading your scripts…
@@ -150,18 +457,40 @@ export default function ScriptsScreen(props: {
           No scripts yet — open the Fanciaga app, press <span className="text-gray-300">Script Writter</span>{' '}
           to record your posting actions, then save the script and it will show up here.
         </div>
+      ) : filtered.length === 0 ? (
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-8 text-center text-sm text-gray-500">
+          No scripts in this tab — select scripts from All and move them here.
+        </div>
       ) : (
         <div className="flex flex-col gap-2">
-          {(scripts || []).map((s) => {
+          {filtered.map((s) => {
             const open = expanded === s.id
+            const isSel = selected.has(s.id)
             return (
-              <div key={s.id} className="rounded-2xl border border-white/10 bg-white/[0.03]">
+              <div
+                key={s.id}
+                className={`rounded-2xl border bg-white/[0.03] ${
+                  isSel ? 'border-accent/50' : 'border-white/10'
+                }`}
+              >
                 <div
                   className="flex w-full cursor-pointer items-center gap-3 px-4 py-3 text-left"
                   onClick={() => {
                     if (renamingId !== s.id) setExpanded(open ? null : s.id)
                   }}
                 >
+                  <label
+                    className="flex shrink-0 items-center"
+                    onClick={(e) => e.stopPropagation()}
+                    title="Select to move into a tab"
+                  >
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded border-white/20 bg-panel2 text-accent focus:ring-accent/40"
+                      checked={isSel}
+                      onChange={() => toggleSelect(s.id)}
+                    />
+                  </label>
                   <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
                     <ScriptIcon size={16} />
                   </span>
@@ -195,7 +524,14 @@ export default function ScriptsScreen(props: {
                         </button>
                       </div>
                     ) : (
-                      <div className="truncate text-sm font-semibold text-gray-100">{s.name}</div>
+                      <div className="flex min-w-0 items-center gap-2">
+                        <div className="truncate text-sm font-semibold text-gray-100">{s.name}</div>
+                        {tabFilter === 'all' && (
+                          <span className="shrink-0 rounded-full bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-gray-500">
+                            {tabLabel(s.tabId)}
+                          </span>
+                        )}
+                      </div>
                     )}
                     <div className="mt-0.5 text-[11px] text-gray-500">
                       {s.actions.length} action{s.actions.length === 1 ? '' : 's'} ·{' '}
@@ -328,6 +664,48 @@ export default function ScriptsScreen(props: {
         <ScriptPreviewSidebar script={previewing} onClose={() => setPreviewing(null)} />
       )}
     </div>
+  )
+}
+
+function TabPill(props: {
+  active: boolean
+  label: string
+  onClick: () => void
+  onRename?: () => void
+  onDelete?: () => void
+}): JSX.Element {
+  return (
+    <span
+      className={`inline-flex items-center gap-0.5 rounded-full border text-[11px] transition-colors ${
+        props.active
+          ? 'border-accent/50 bg-accent/15 text-accent'
+          : 'border-white/10 bg-white/[0.03] text-gray-400 hover:border-white/20 hover:text-gray-200'
+      }`}
+    >
+      <button type="button" className="px-2.5 py-1" onClick={props.onClick}>
+        {props.label}
+      </button>
+      {props.onRename && (
+        <button
+          type="button"
+          className="rounded-full p-1 text-gray-500 hover:bg-white/10 hover:text-gray-200"
+          title="Rename tab"
+          onClick={props.onRename}
+        >
+          <PencilIcon size={10} />
+        </button>
+      )}
+      {props.onDelete && (
+        <button
+          type="button"
+          className="mr-0.5 rounded-full p-1 text-gray-500 hover:bg-red-500/10 hover:text-red-300"
+          title="Delete tab"
+          onClick={props.onDelete}
+        >
+          <CloseIcon size={10} />
+        </button>
+      )}
+    </span>
   )
 }
 
