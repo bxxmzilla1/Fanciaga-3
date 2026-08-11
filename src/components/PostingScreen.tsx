@@ -15,6 +15,7 @@ import {
   type StackedRunItem
 } from '../lib/types'
 import { listRuns, recordRun, setRunCommand, updateRun, type ScriptRun } from '../lib/history'
+import { findMissingScriptMedia } from '../lib/preview'
 import { CheckIcon, CloseIcon, ScriptIcon } from './Icons'
 
 // Posting — load a Script, multi-select Instagram accounts to apply it to,
@@ -256,6 +257,17 @@ export default function PostingScreen(props: {
     setStack([])
 
     try {
+      // Pre-flight: every video + thumbnail this script references must still
+      // exist in the vault — otherwise the engine fails mid-run with "that
+      // shared item no longer exists". Catch it here, before anything queues.
+      const missing = await findMissingScriptMedia(script)
+      if (missing.length) {
+        setError(
+          `This script can't run — some of its vault media no longer exists. Rebuild it in the Script Creator (or restore the items), then try again.\n${missing.join('\n')}`
+        )
+        return
+      }
+
       const targets = [...selected]
         .map((id) => accountById.get(id))
         .filter((a): a is EngineAccount => !!a)
@@ -352,7 +364,7 @@ export default function PostingScreen(props: {
 
       {error && (
         <div className="flex items-start justify-between gap-3 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-          <span>{error}</span>
+          <span className="whitespace-pre-line">{error}</span>
           <button className="shrink-0 text-red-300/80 hover:text-white" onClick={() => setError(null)}>
             Dismiss
           </button>

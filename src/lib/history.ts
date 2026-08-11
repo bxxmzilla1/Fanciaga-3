@@ -1,5 +1,6 @@
 import { supabase } from './supabase'
 import { cancelPendingCommand, forceStopEngine } from './engine'
+import { findMissingScriptMedia } from './preview'
 import type { ScriptEntry } from './types'
 
 // Run history — one `script_runs` row per script run started from Posting
@@ -133,6 +134,21 @@ export async function retryRun(
       'The original run data was already cleaned up — start it again from Posting.'
     )
   }
+
+  // Pre-flight: the script's videos + thumbnails must still exist in the
+  // vault, or the engine would fail this retry the same way again.
+  const payloadScript = ((row.payload || {}) as Record<string, unknown>).script as
+    | ScriptEntry
+    | undefined
+  if (payloadScript?.actions) {
+    const missing = await findMissingScriptMedia(payloadScript).catch(() => [])
+    if (missing.length) {
+      throw new Error(
+        `Can't retry — some of this script's vault media no longer exists. ${missing.join(' · ')}`
+      )
+    }
+  }
+
   const insert: Record<string, unknown> = {
     user_id: userId,
     command: 'run_script',

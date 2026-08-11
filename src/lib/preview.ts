@@ -178,6 +178,131 @@ export async function loadScriptPreview(script: ScriptEntry): Promise<PreviewVid
   return videos
 }
 
+// ── Pre-flight media check (Posting) ─────────────────────────────────────────
+// Before a script is sent to the engine, every video AND thumbnail image it
+// references must still exist in the vault (with a cloud copy). Otherwise the
+// engine fails mid-run with "that shared item no longer exists" — this check
+// catches it up front with a message naming exactly what's missing.
+
+interface MediaCheckRef {
+  kind: 'video' | 'thumbnail'
+  source: 'mine' | 'group'
+  itemId: string
+  /** 1-based post number inside the script, for the error message. */
+  postIndex: number
+}
+
+function collectMediaRefs(script: ScriptEntry): MediaCheckRef[] {
+  const refs: MediaCheckRef[] = []
+  const pushThumb = (raw: unknown, postIndex: number): void => {
+    const th = (raw || null) as Record<string, unknown> | null
+    if (!th?.itemId) return
+    refs.push({
+      kind: 'thumbnail',
+      source: th.source === 'group' ? 'group' : 'mine',
+      itemId: String(th.itemId),
+      postIndex
+    })
+  }
+  let post = 0
+  for (const action of script.actions) {
+    const input = (action.input || {}) as Record<string, unknown>
+    if (action.type === 'striker_batch') {
+      const slots = Array.isArray(input.slots)
+        ? (input.slots as Array<Record<string, unknown>>)
+        : []
+      for (const s of slots) {
+        post++
+        if (s.itemId) {
+          refs.push({
+            kind: 'video',
+            source: s.source === 'group' ? 'group' : 'mine',
+            itemId: String(s.itemId),
+            postIndex: post
+          })
+        }
+        pushThumb(s.thumbnail, post)
+      }
+    } else {
+      post++
+      const isGroup = action.type === 'multi_post_group'
+      const itemId = isGroup ? input.itemId : input.presetId
+      if (itemId) {
+        refs.push({
+          kind: 'video',
+          source: isGroup ? 'group' : 'mine',
+          itemId: String(itemId),
+          postIndex: post
+        })
+      }
+      pushThumb(input.thumbnail, post)
+      // Per-account replacement items / thumbnails reference media too.
+      const itemOverrides = (input.accountItemOverrides || {}) as Record<string, unknown>
+      for (const v of Object.values(itemOverrides)) {
+        if (v) {
+          refs.push({
+            kind: 'video',
+            source: isGroup ? 'group' : 'mine',
+            itemId: String(v),
+            postIndex: post
+          })
+        }
+      }
+      const thumbOverrides = (input.accountThumbnailOverrides || {}) as Record<string, unknown>
+      for (const v of Object.values(thumbOverrides)) pushThumb(v, post)
+    }
+  }
+  return refs
+}
+
+/**
+ * Verify every video + thumbnail the script references still exists in the
+ * vault. Returns a human-readable list of what's missing — empty = all good.
+ */
+export async function findMissingScriptMedia(script: ScriptEntry): Promise<string[]> {
+  const refs = collectMediaRefs(script)
+  if (!refs.length) return []
+
+  const mineIds = [...new Set(refs.filter((r) => r.source === 'mine').map((r) => r.itemId))]
+  const groupIds = [...new Set(refs.filter((r) => r.source === 'group').map((r) => r.itemId))]
+
+  const [mine, group] = await Promise.all([
+    mineIds.length
+      ? supabase.from('presets').select('id, video_path').in('id', mineIds)
+      : Promise.resolve({ data: [] as Array<{ id: string; video_path: string }>, error: null }),
+    groupIds.length
+      ? supabase.from('group_vault_items').select('id, video_path').in('id', groupIds)
+      : Promise.resolve({ data: [] as Array<{ id: string; video_path: string }>, error: null })
+  ])
+  // Can't verify right now (offline / transient error) — don't block the run.
+  if (mine.error || group.error) return []
+
+  const available = new Set<string>()
+  for (const r of (mine.data as Array<{ id: string; video_path: string }>) || []) {
+    if (r.video_path) available.add(`m:${r.id}`)
+  }
+  for (const r of (group.data as Array<{ id: string; video_path: string }>) || []) {
+    if (r.video_path) available.add(`g:${r.id}`)
+  }
+
+  const missing: string[] = []
+  const seen = new Set<string>()
+  for (const r of refs) {
+    const key = `${r.source === 'mine' ? 'm' : 'g'}:${r.itemId}`
+    if (available.has(key)) continue
+    const msgKey = `${r.postIndex}:${r.kind}:${key}`
+    if (seen.has(msgKey)) continue
+    seen.add(msgKey)
+    const where = r.source === 'group' ? 'the group vault' : 'your vault'
+    missing.push(
+      r.kind === 'video'
+        ? `Post ${r.postIndex}: its video was deleted from ${where}`
+        : `Post ${r.postIndex}: its thumbnail image was deleted from ${where}`
+    )
+  }
+  return missing
+}
+
 /**
  * Sign the actual media URL — only called when the user presses play, so the
  * heavy video is never loaded (or cached) while just browsing the list.
