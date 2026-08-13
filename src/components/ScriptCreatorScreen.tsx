@@ -8,6 +8,7 @@ import {
   type VaultItem,
   type VaultTab
 } from '../lib/vaults'
+import { videoHasNoPicture, UNPLAYABLE_VIDEO_MSG } from '../lib/preview'
 import { saveScript } from '../lib/scripts'
 import type { ScriptAccountRef, ScriptEntry } from '../lib/types'
 import {
@@ -759,6 +760,12 @@ function VaultSidebar(props: {
                   autoPlay
                   playsInline
                   className="max-h-full w-full object-contain"
+                  onLoadedMetadata={(e) => {
+                    if (videoHasNoPicture(e.currentTarget)) {
+                      e.currentTarget.pause()
+                      setPlayError(UNPLAYABLE_VIDEO_MSG)
+                    }
+                  }}
                 />
               )}
             </div>

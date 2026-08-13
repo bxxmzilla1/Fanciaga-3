@@ -34,6 +34,19 @@ export interface PreviewVideo {
   slotIndex: number | null
 }
 
+/** Shown when a video loads but the browser can't decode its picture. */
+export const UNPLAYABLE_VIDEO_MSG =
+  'This video\u2019s format can\u2019t be previewed in this browser \u2014 only its sound plays (usually an iPhone/HEVC recording). ' +
+  'It will still post normally. Re-add it to the vault with the latest Fanciaga app to get a playable preview.'
+
+/**
+ * True when a <video> element's media has no decodable picture (e.g. an HEVC
+ * file: the browser plays the AAC audio but drops the video track).
+ */
+export function videoHasNoPicture(el: HTMLVideoElement): boolean {
+  return el.readyState >= 1 && el.videoWidth === 0 && el.videoHeight === 0
+}
+
 interface Ref {
   source: 'mine' | 'group'
   itemId: string

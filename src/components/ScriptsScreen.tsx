@@ -10,7 +10,14 @@ import {
   renameScriptTab,
   type ScriptTab
 } from '../lib/scripts'
-import { loadScriptPreview, saveScriptSchedule, signMediaUrl, type PreviewVideo } from '../lib/preview'
+import {
+  loadScriptPreview,
+  saveScriptSchedule,
+  signMediaUrl,
+  videoHasNoPicture,
+  UNPLAYABLE_VIDEO_MSG,
+  type PreviewVideo
+} from '../lib/preview'
 import type { ScriptAccountRef, ScriptEntry } from '../lib/types'
 import {
   ChevronDownIcon,
@@ -1037,7 +1044,20 @@ function InlinePlayer(props: { video: PreviewVideo; onClose: () => void }): JSX.
       ) : props.video.kind === 'image' ? (
         <img src={url} alt={props.video.title} className="max-h-72 w-full object-contain" />
       ) : (
-        <video ref={videoRef} src={url} autoPlay controls playsInline className="max-h-72 w-full" />
+        <video
+          ref={videoRef}
+          src={url}
+          autoPlay
+          controls
+          playsInline
+          className="max-h-72 w-full"
+          onLoadedMetadata={(e) => {
+            if (videoHasNoPicture(e.currentTarget)) {
+              e.currentTarget.pause()
+              setError(UNPLAYABLE_VIDEO_MSG)
+            }
+          }}
+        />
       )}
     </div>
   )
