@@ -59,16 +59,10 @@ export async function listMyGroups(): Promise<VaultGroup[]> {
   }))
 }
 
-/** One group's vault items with signed thumbnail URLs (videos AND images). */
-export async function listGroupVaultItems(groupId: string): Promise<VaultItem[]> {
-  const { data, error } = await supabase
-    .from('group_vault_items')
-    .select('id, title, video_path, thumb_path, ext, duration, tab_id, created_at')
-    .eq('group_id', groupId)
-    .order('created_at', { ascending: false })
-  if (error) throw new Error(error.message || 'Could not load that group vault.')
-  const rows = (data as Array<Record<string, unknown>>) || []
-
+async function mapVaultRows(
+  rows: Array<Record<string, unknown>>,
+  fallbackGroupId = ''
+): Promise<VaultItem[]> {
   const paths = [...new Set(rows.map((r) => String(r.thumb_path || '')).filter(Boolean))]
   const thumbs = new Map<string, string>()
   if (paths.length) {
@@ -77,13 +71,12 @@ export async function listGroupVaultItems(groupId: string): Promise<VaultItem[]>
       if (d.path && d.signedUrl && !d.error) thumbs.set(d.path, d.signedUrl)
     }
   }
-
   return rows.map((r) => {
     const ext = String(r.ext || 'mp4').toLowerCase()
     const thumbPath = String(r.thumb_path || '')
     return {
       id: String(r.id),
-      groupId,
+      groupId: String(r.group_id || fallbackGroupId),
       title: String(r.title || 'Untitled'),
       kind: IMAGE_EXTS.has(ext) ? 'image' : 'video',
       durationSeconds: Number(r.duration || 0),
@@ -93,6 +86,29 @@ export async function listGroupVaultItems(groupId: string): Promise<VaultItem[]>
       createdAt: r.created_at ? new Date(String(r.created_at)).getTime() : Date.now()
     }
   })
+}
+
+/** One group's vault items with signed thumbnail URLs (videos AND images). */
+export async function listGroupVaultItems(groupId: string): Promise<VaultItem[]> {
+  const { data, error } = await supabase
+    .from('group_vault_items')
+    .select('id, group_id, title, video_path, thumb_path, ext, duration, tab_id, created_at')
+    .eq('group_id', groupId)
+    .order('created_at', { ascending: false })
+  if (error) throw new Error(error.message || 'Could not load that group vault.')
+  return mapVaultRows((data as Array<Record<string, unknown>>) || [], groupId)
+}
+
+/** Resolve specific group-vault items (used when opening a script for edit). */
+export async function listVaultItemsByIds(ids: string[]): Promise<VaultItem[]> {
+  const unique = [...new Set(ids.filter(Boolean))]
+  if (!unique.length) return []
+  const { data, error } = await supabase
+    .from('group_vault_items')
+    .select('id, group_id, title, video_path, thumb_path, ext, duration, tab_id, created_at')
+    .in('id', unique)
+  if (error) throw new Error(error.message || 'Could not load those vault items.')
+  return mapVaultRows((data as Array<Record<string, unknown>>) || [])
 }
 
 /**

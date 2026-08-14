@@ -32,6 +32,11 @@ export interface PreviewVideo {
   actionIndex: number
   /** Slot index within a striker_batch action, or null for single-post actions. */
   slotIndex: number | null
+  /** Group vault the video lives in (null for personal vault posts). */
+  groupId: string | null
+  /** Intro thumbnail image (0.5s intro before the video), if one is attached. */
+  introThumbTitle: string | null
+  introThumbUrl: string | null
 }
 
 /** Shown when a video loads but the browser can't decode its picture. */
@@ -47,13 +52,31 @@ export function videoHasNoPicture(el: HTMLVideoElement): boolean {
   return el.readyState >= 1 && el.videoWidth === 0 && el.videoHeight === 0
 }
 
+interface ThumbRef {
+  source: 'mine' | 'group'
+  itemId: string
+  groupId: string | null
+}
+
 interface Ref {
   source: 'mine' | 'group'
   itemId: string
+  groupId: string | null
   at: number | null
   account: string
   actionIndex: number
   slotIndex: number | null
+  thumb: ThumbRef | null
+}
+
+function parseThumb(raw: unknown): ThumbRef | null {
+  const th = (raw || null) as Record<string, unknown> | null
+  if (!th?.itemId) return null
+  return {
+    source: th.source === 'group' ? 'group' : 'mine',
+    itemId: String(th.itemId),
+    groupId: th.groupId ? String(th.groupId) : null
+  }
 }
 
 const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'])
@@ -80,10 +103,12 @@ function extractRefs(script: ScriptEntry): Ref[] {
         out.push({
           source: s.source === 'group' ? 'group' : 'mine',
           itemId: String(s.itemId),
+          groupId: s.groupId ? String(s.groupId) : null,
           at: Number.isFinite(at) ? at : null,
           account: usernameOf(action.accounts, String(s.accountId || '')),
           actionIndex,
-          slotIndex
+          slotIndex,
+          thumb: parseThumb(s.thumbnail)
         })
       })
     } else {
@@ -97,11 +122,13 @@ function extractRefs(script: ScriptEntry): Ref[] {
       out.push({
         source: isGroup ? 'group' : 'mine',
         itemId: String(itemId),
+        groupId: isGroup && input.groupId ? String(input.groupId) : null,
         at: Number.isFinite(at) ? at : null,
         account:
           names.slice(0, 2).join(', ') + (names.length > 2 ? ` +${names.length - 2} more` : ''),
         actionIndex,
-        slotIndex: null
+        slotIndex: null,
+        thumb: parseThumb(input.thumbnail)
       })
     }
   })
@@ -136,8 +163,18 @@ export async function loadScriptPreview(script: ScriptEntry): Promise<PreviewVid
   const refs = extractRefs(script)
   if (!refs.length) return []
 
-  const mineIds = [...new Set(refs.filter((r) => r.source === 'mine').map((r) => r.itemId))]
-  const groupIds = [...new Set(refs.filter((r) => r.source === 'group').map((r) => r.itemId))]
+  const mineIds = [
+    ...new Set([
+      ...refs.filter((r) => r.source === 'mine').map((r) => r.itemId),
+      ...refs.filter((r) => r.thumb?.source === 'mine').map((r) => r.thumb!.itemId)
+    ])
+  ]
+  const groupIds = [
+    ...new Set([
+      ...refs.filter((r) => r.source === 'group').map((r) => r.itemId),
+      ...refs.filter((r) => r.thumb?.source === 'group').map((r) => r.thumb!.itemId)
+    ])
+  ]
 
   const [mine, group] = await Promise.all([
     mineIds.length
@@ -156,8 +193,14 @@ export async function loadScriptPreview(script: ScriptEntry): Promise<PreviewVid
   for (const r of (group.data as ItemRow[]) || []) meta.set(`g:${r.id}`, r)
 
   const [mineThumbs, groupThumbs] = await Promise.all([
-    signThumbs('presets', ((mine.data as ItemRow[]) || []).map((r) => r.thumb_path)),
-    signThumbs('group-vault', ((group.data as ItemRow[]) || []).map((r) => r.thumb_path))
+    signThumbs(
+      'presets',
+      ((mine.data as ItemRow[]) || []).flatMap((r) => [r.thumb_path, IMAGE_EXTS.has((r.ext || '').toLowerCase()) ? r.video_path : ''])
+    ),
+    signThumbs(
+      'group-vault',
+      ((group.data as ItemRow[]) || []).flatMap((r) => [r.thumb_path, IMAGE_EXTS.has((r.ext || '').toLowerCase()) ? r.video_path : ''])
+    )
   ])
 
   const videos: PreviewVideo[] = refs.map((r, i) => {
@@ -165,6 +208,13 @@ export async function loadScriptPreview(script: ScriptEntry): Promise<PreviewVid
     const row = meta.get(r.source === 'mine' ? `m:${r.itemId}` : `g:${r.itemId}`)
     const thumbs = r.source === 'mine' ? mineThumbs : groupThumbs
     const ext = (row?.ext || 'mp4').toLowerCase()
+    const intro = r.thumb
+      ? meta.get(r.thumb.source === 'mine' ? `m:${r.thumb.itemId}` : `g:${r.thumb.itemId}`)
+      : null
+    const introThumbs = r.thumb?.source === 'mine' ? mineThumbs : groupThumbs
+    const introUrl = intro
+      ? introThumbs.get(intro.thumb_path) || introThumbs.get(intro.video_path) || null
+      : null
     return {
       key: `${i}:${r.itemId}`,
       itemId: r.itemId,
@@ -179,7 +229,10 @@ export async function loadScriptPreview(script: ScriptEntry): Promise<PreviewVid
       account: r.account,
       gapToNextMs: null,
       actionIndex: r.actionIndex,
-      slotIndex: r.slotIndex
+      slotIndex: r.slotIndex,
+      groupId: r.groupId,
+      introThumbTitle: intro?.title || (r.thumb ? 'Thumbnail' : null),
+      introThumbUrl: introUrl
     }
   })
 
@@ -355,4 +408,64 @@ export async function saveScriptSchedule(
   }
   const { error } = await supabase.from('scripts').update({ actions }).eq('id', script.id)
   if (error) throw new Error(error.message || 'Could not save the new intervals.')
+}
+
+export interface ScriptMediaPick {
+  source: 'mine' | 'group'
+  groupId?: string
+  itemId: string
+}
+
+/**
+ * Swap the video and/or intro thumbnail on one post and persist the script.
+ * Returns the updated ScriptEntry so the UI can stay in sync.
+ */
+export async function saveScriptPostMedia(
+  script: ScriptEntry,
+  target: { actionIndex: number; slotIndex: number | null },
+  patch: { video?: ScriptMediaPick; thumbnail?: ScriptMediaPick | null }
+): Promise<ScriptEntry> {
+  const actions = JSON.parse(JSON.stringify(script.actions)) as ScriptAction[]
+  const action = actions[target.actionIndex]
+  if (!action) throw new Error('That post is no longer in the script.')
+  const input = ((action.input as Record<string, unknown>) || {}) as Record<string, unknown>
+
+  const applyThumb = (obj: Record<string, unknown>, thumb: ScriptMediaPick | null): void => {
+    if (thumb) obj.thumbnail = { source: thumb.source, itemId: thumb.itemId, ...(thumb.groupId ? { groupId: thumb.groupId } : {}) }
+    else delete obj.thumbnail
+  }
+
+  if (target.slotIndex != null) {
+    const slots = Array.isArray(input.slots) ? (input.slots as Array<Record<string, unknown>>) : []
+    const slot = slots[target.slotIndex]
+    if (!slot) throw new Error('That post is no longer in the script.')
+    if (patch.video) {
+      slot.source = patch.video.source
+      slot.itemId = patch.video.itemId
+      if (patch.video.groupId) slot.groupId = patch.video.groupId
+      else delete slot.groupId
+    }
+    if (patch.thumbnail !== undefined) applyThumb(slot, patch.thumbnail)
+  } else {
+    if (patch.video) {
+      if (action.type === 'multi_post_group') {
+        input.itemId = patch.video.itemId
+        if (patch.video.groupId) input.groupId = patch.video.groupId
+      } else if (action.type === 'multi_post_vault') {
+        if (patch.video.source === 'group') {
+          throw new Error('This post uses a personal vault video — change it in the Fanciaga desktop app.')
+        }
+        input.presetId = patch.video.itemId
+      }
+    }
+    if (patch.thumbnail !== undefined) applyThumb(input, patch.thumbnail)
+  }
+  action.input = input
+
+  const { error } = await supabase
+    .from('scripts')
+    .update({ actions, updated_at: new Date().toISOString() })
+    .eq('id', script.id)
+  if (error) throw new Error(error.message || 'Could not update that post.')
+  return { ...script, actions }
 }

@@ -12,18 +12,28 @@ import {
 } from '../lib/scripts'
 import {
   loadScriptPreview,
+  saveScriptPostMedia,
   saveScriptSchedule,
   signMediaUrl,
   videoHasNoPicture,
   UNPLAYABLE_VIDEO_MSG,
   type PreviewVideo
 } from '../lib/preview'
+import {
+  listGroupVaultItems,
+  listGroupVaultTabs,
+  listMyGroups,
+  type VaultGroup,
+  type VaultItem,
+  type VaultTab
+} from '../lib/vaults'
 import type { ScriptAccountRef, ScriptEntry } from '../lib/types'
 import {
   ChevronDownIcon,
   ChevronUpIcon,
   CloseIcon,
   FilmIcon,
+  ImageIcon,
   PencilIcon,
   PlayIcon,
   ScriptIcon,
@@ -65,6 +75,7 @@ function fmtDuration(s: number): string {
 export default function ScriptsScreen(props: {
   userId: string
   onUseInPosting: (script: ScriptEntry) => void
+  onEdit: (script: ScriptEntry) => void
 }): JSX.Element {
   const [scripts, setScripts] = useState<ScriptEntry[] | null>(null)
   const [tabs, setTabs] = useState<ScriptTab[]>([])
@@ -700,6 +711,13 @@ export default function ScriptsScreen(props: {
                       >
                         Preview
                       </button>
+                      <button
+                        className="rounded-xl border border-white/10 px-4 py-2 text-xs font-semibold text-gray-200 transition-colors hover:bg-white/[0.06]"
+                        onClick={() => props.onEdit(s)}
+                        title="Change this script’s videos, thumbnails, and posting times"
+                      >
+                        Edit videos
+                      </button>
                     </div>
                   </div>
                 )}
@@ -710,7 +728,15 @@ export default function ScriptsScreen(props: {
       )}
 
       {previewing && (
-        <ScriptPreviewSidebar script={previewing} onClose={() => setPreviewing(null)} />
+        <ScriptPreviewSidebar
+          script={previewing}
+          onClose={() => setPreviewing(null)}
+          onEdit={() => props.onEdit(previewing)}
+          onScriptChange={(next) => {
+            setPreviewing(next)
+            setScripts((prev) => (prev ? prev.map((x) => (x.id === next.id ? next : x)) : prev))
+          }}
+        />
       )}
     </div>
   )
@@ -749,7 +775,12 @@ function splitGap(ms: number): { d: number; h: number; m: number } {
   return { d: Math.floor(total / (24 * 60)), h: Math.floor((total % (24 * 60)) / 60), m: total % 60 }
 }
 
-function ScriptPreviewSidebar(props: { script: ScriptEntry; onClose: () => void }): JSX.Element {
+function ScriptPreviewSidebar(props: {
+  script: ScriptEntry
+  onClose: () => void
+  onEdit: () => void
+  onScriptChange: (script: ScriptEntry) => void
+}): JSX.Element {
   const [videos, setVideos] = useState<PreviewVideo[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   // Editable gaps (ms) between consecutive posts — length = videos.length - 1.
@@ -761,6 +792,14 @@ function ScriptPreviewSidebar(props: { script: ScriptEntry; onClose: () => void 
   const [savedNote, setSavedNote] = useState<string | null>(null)
   // Key of the post playing inline (its media is signed only while open).
   const [playingKey, setPlayingKey] = useState<string | null>(null)
+  const [picking, setPicking] = useState<{
+    key: string
+    kind: 'video' | 'thumb'
+    actionIndex: number
+    slotIndex: number | null
+    groupId: string | null
+  } | null>(null)
+  const [pickBusy, setPickBusy] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -768,6 +807,7 @@ function ScriptPreviewSidebar(props: { script: ScriptEntry; onClose: () => void 
     setError(null)
     setDirty(false)
     setPlayingKey(null)
+    setPicking(null)
     loadScriptPreview(props.script)
       .then((v) => {
         if (!alive) return
@@ -803,6 +843,40 @@ function ScriptPreviewSidebar(props: { script: ScriptEntry; onClose: () => void 
     })
     setDirty(true)
     setSavedNote(null)
+  }
+
+  async function applyMediaPick(item: VaultItem): Promise<void> {
+    if (!picking) return
+    setPickBusy(true)
+    setError(null)
+    try {
+      const pick = { source: 'group' as const, groupId: item.groupId, itemId: item.id }
+      const next = await saveScriptPostMedia(
+        props.script,
+        { actionIndex: picking.actionIndex, slotIndex: picking.slotIndex },
+        picking.kind === 'video' ? { video: pick } : { thumbnail: pick }
+      )
+      props.onScriptChange(next)
+      setPicking(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not update that post.')
+    } finally {
+      setPickBusy(false)
+    }
+  }
+
+  async function clearThumb(v: PreviewVideo): Promise<void> {
+    setError(null)
+    try {
+      const next = await saveScriptPostMedia(
+        props.script,
+        { actionIndex: v.actionIndex, slotIndex: v.slotIndex },
+        { thumbnail: null }
+      )
+      props.onScriptChange(next)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not remove that thumbnail.')
+    }
   }
 
   async function save(): Promise<void> {
@@ -843,9 +917,16 @@ function ScriptPreviewSidebar(props: { script: ScriptEntry; onClose: () => void 
           <div className="min-w-0">
             <h2 className="truncate text-sm font-semibold text-gray-100">Preview — {props.script.name}</h2>
             <p className="mt-0.5 text-[11px] text-gray-500">
-              Play videos here · edit the wait between posts, then save
+              Play videos · change video or thumbnail · edit waits
             </p>
           </div>
+          <button
+            className="shrink-0 rounded-lg border border-white/10 px-2 py-1 text-[11px] text-gray-300 hover:bg-white/[0.06]"
+            onClick={props.onEdit}
+            title="Open the full editor to add, remove, or reorder posts"
+          >
+            Full edit
+          </button>
           <button
             className="shrink-0 rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-white/[0.06] hover:text-white"
             onClick={props.onClose}
@@ -861,7 +942,16 @@ function ScriptPreviewSidebar(props: { script: ScriptEntry; onClose: () => void 
               {error}
             </div>
           ) : null}
-          {videos === null && !error ? (
+          {picking ? (
+            <PreviewVaultPicker
+              kind={picking.kind}
+              initialGroupId={picking.groupId}
+              busy={pickBusy}
+              onPick={(item) => void applyMediaPick(item)}
+              onCancel={() => setPicking(null)}
+            />
+          ) : null}
+          {picking ? null : videos === null && !error ? (
             <p className="py-8 text-center text-xs text-gray-500">Loading the posting order…</p>
           ) : videos && videos.length === 0 ? (
             <p className="py-8 text-center text-xs text-gray-500">
@@ -915,6 +1005,62 @@ function ScriptPreviewSidebar(props: { script: ScriptEntry; onClose: () => void 
                           {fmtAt(times[i])}
                           {v.kind === 'image' ? ' · image' : ''}
                         </div>
+                        {v.introThumbTitle && (
+                          <div className="mt-1 flex items-center gap-1.5 text-[10px] text-gray-400">
+                            {v.introThumbUrl ? (
+                              <img src={v.introThumbUrl} alt="" className="h-5 w-5 rounded object-cover" />
+                            ) : (
+                              <ImageIcon size={11} />
+                            )}
+                            <span className="truncate">Thumb: {v.introThumbTitle}</span>
+                          </div>
+                        )}
+                        <div className="mt-1.5 flex flex-wrap gap-1">
+                          <button
+                            className="rounded-md border border-white/10 px-1.5 py-0.5 text-[10px] text-gray-300 hover:bg-white/[0.06] disabled:opacity-40"
+                            disabled={v.source !== 'group'}
+                            title={
+                              v.source !== 'group'
+                                ? 'Personal vault videos can be changed in the Fanciaga desktop app'
+                                : 'Replace this post’s video'
+                            }
+                            onClick={() =>
+                              setPicking({
+                                key: v.key,
+                                kind: 'video',
+                                actionIndex: v.actionIndex,
+                                slotIndex: v.slotIndex,
+                                groupId: v.groupId
+                              })
+                            }
+                          >
+                            Change video
+                          </button>
+                          <button
+                            className="rounded-md border border-white/10 px-1.5 py-0.5 text-[10px] text-gray-300 hover:bg-white/[0.06]"
+                            title="Pick or replace the 0.5s intro thumbnail"
+                            onClick={() =>
+                              setPicking({
+                                key: v.key,
+                                kind: 'thumb',
+                                actionIndex: v.actionIndex,
+                                slotIndex: v.slotIndex,
+                                groupId: v.groupId
+                              })
+                            }
+                          >
+                            {v.introThumbTitle ? 'Change thumb' : 'Add thumb'}
+                          </button>
+                          {v.introThumbTitle && (
+                            <button
+                              className="rounded-md px-1.5 py-0.5 text-[10px] text-gray-500 hover:text-red-300"
+                              title="Remove the intro thumbnail"
+                              onClick={() => void clearThumb(v)}
+                            >
+                              Remove thumb
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
 
@@ -934,7 +1080,7 @@ function ScriptPreviewSidebar(props: { script: ScriptEntry; onClose: () => void 
           ) : null}
         </div>
 
-        {videos && videos.length > 1 && (
+        {!picking && videos && videos.length > 1 && (
           <div className="flex items-center justify-between gap-3 border-t border-white/10 px-4 py-3">
             <span className="text-[11px] text-gray-500">
               {savedNote ? <span className="text-emerald-400">{savedNote}</span> : dirty ? 'Unsaved interval changes' : 'Intervals up to date'}
@@ -1058,6 +1204,169 @@ function InlinePlayer(props: { video: PreviewVideo; onClose: () => void }): JSX.
             }
           }}
         />
+      )}
+    </div>
+  )
+}
+
+function PreviewVaultPicker(props: {
+  kind: 'video' | 'thumb'
+  initialGroupId: string | null
+  busy: boolean
+  onPick: (item: VaultItem) => void
+  onCancel: () => void
+}): JSX.Element {
+  const [groups, setGroups] = useState<VaultGroup[] | null>(null)
+  const [groupId, setGroupId] = useState(props.initialGroupId || '')
+  const [items, setItems] = useState<VaultItem[] | null>(null)
+  const [tabs, setTabs] = useState<VaultTab[]>([])
+  const [activeTab, setActiveTab] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    void listMyGroups()
+      .then((g) => {
+        setGroups(g)
+        if (!groupId && g.length === 1) setGroupId(g[0].id)
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : 'Could not load your groups.'))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    if (!groupId) {
+      setItems(null)
+      return
+    }
+    let alive = true
+    setLoading(true)
+    setError(null)
+    void Promise.all([listGroupVaultItems(groupId), listGroupVaultTabs(groupId).catch(() => [] as VaultTab[])])
+      .then(([loaded, loadedTabs]) => {
+        if (!alive) return
+        setItems(loaded)
+        setTabs(loadedTabs)
+      })
+      .catch((e) => {
+        if (alive) setError(e instanceof Error ? e.message : 'Could not load that vault.')
+      })
+      .finally(() => {
+        if (alive) setLoading(false)
+      })
+    return () => {
+      alive = false
+    }
+  }, [groupId])
+
+  const filtered = (items || []).filter((i) => {
+    if (props.kind === 'video' ? i.kind !== 'video' : i.kind !== 'image') return false
+    if (!activeTab) return true
+    if (activeTab === 'unsorted') return !i.tabId
+    return i.tabId === activeTab
+  })
+  const hasUnsorted = (items || []).some((i) => !i.tabId)
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="text-xs font-semibold text-accent">
+            {props.kind === 'video' ? 'Pick a video' : 'Pick a thumbnail'}
+          </div>
+          <p className="text-[10px] text-gray-500">
+            {props.kind === 'video'
+              ? 'Tap a video to replace this post.'
+              : 'Tap an image to use as the 0.5s intro.'}
+          </p>
+        </div>
+        <button
+          className="shrink-0 rounded-lg border border-white/10 px-2 py-1 text-[11px] text-gray-300 hover:bg-white/[0.05]"
+          onClick={props.onCancel}
+        >
+          Cancel
+        </button>
+      </div>
+      <select
+        className="rounded-xl border border-white/10 bg-panel2 px-2.5 py-1.5 text-xs text-gray-100 outline-none focus:border-accent/60"
+        value={groupId}
+        onChange={(e) => {
+          setActiveTab('')
+          setGroupId(e.target.value)
+        }}
+      >
+        <option value="">{groups === null ? 'Loading groups…' : 'Pick a group vault…'}</option>
+        {(groups || []).map((g) => (
+          <option key={g.id} value={g.id}>
+            {g.name}
+          </option>
+        ))}
+      </select>
+      {groupId && (tabs.length > 0 || hasUnsorted) && (
+        <div className="flex items-center gap-1 overflow-x-auto pb-0.5">
+          <button
+            className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] ${
+              activeTab === '' ? 'bg-accent/20 text-white' : 'text-gray-500 hover:text-gray-200'
+            }`}
+            onClick={() => setActiveTab('')}
+          >
+            All
+          </button>
+          {tabs.map((t) => (
+            <button
+              key={t.id}
+              className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] ${
+                activeTab === t.id ? 'bg-accent/20 text-white' : 'text-gray-500 hover:text-gray-200'
+              }`}
+              onClick={() => setActiveTab(t.id)}
+            >
+              {t.name}
+            </button>
+          ))}
+          {hasUnsorted && (
+            <button
+              className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] ${
+                activeTab === 'unsorted' ? 'bg-accent/20 text-white' : 'text-gray-500 hover:text-gray-200'
+              }`}
+              onClick={() => setActiveTab('unsorted')}
+            >
+              Unsorted
+            </button>
+          )}
+        </div>
+      )}
+      {error ? (
+        <p className="py-4 text-center text-[11px] text-red-300">{error}</p>
+      ) : loading ? (
+        <p className="py-6 text-center text-[11px] text-gray-500">Loading the vault…</p>
+      ) : !groupId ? (
+        <p className="py-6 text-center text-[11px] text-gray-500">Pick a group vault above.</p>
+      ) : filtered.length === 0 ? (
+        <p className="py-6 text-center text-[11px] text-gray-500">
+          {props.kind === 'video' ? 'No videos in this folder.' : 'No images in this folder.'}
+        </p>
+      ) : (
+        <div className={`grid grid-cols-3 gap-1.5 ${props.busy ? 'pointer-events-none opacity-60' : ''}`}>
+          {filtered.map((item) => (
+            <button
+              key={item.id}
+              className="overflow-hidden rounded-lg border border-white/[0.06] bg-black/30 text-left hover:border-accent/60"
+              onClick={() => props.onPick(item)}
+              title={item.title}
+            >
+              <div className="relative aspect-[9/16] w-full">
+                {item.thumbUrl ? (
+                  <img src={item.thumbUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
+                ) : (
+                  <span className="flex h-full w-full items-center justify-center text-gray-600">
+                    {props.kind === 'video' ? <FilmIcon size={16} /> : <ImageIcon size={16} />}
+                  </span>
+                )}
+              </div>
+              <p className="truncate px-1 py-0.5 text-[9px] text-gray-500">{item.title}</p>
+            </button>
+          ))}
+        </div>
       )}
     </div>
   )

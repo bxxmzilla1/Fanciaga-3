@@ -3,6 +3,7 @@ import {
   listGroupVaultItems,
   listGroupVaultTabs,
   listMyGroups,
+  listVaultItemsByIds,
   signVaultItemUrl,
   type VaultGroup,
   type VaultItem,
@@ -51,10 +52,17 @@ interface CreatorSlot {
   waitMs: number
   /** Optional image merged as a 0.5s intro before the video. */
   thumb: VaultItem | null
+  /** Preserved from the original script so edits don't reshuffle account/slot. */
+  accountId?: string
+  keyId?: string
+  slot?: 1 | 2 | 3
 }
 
-/** What the right sidebar is showing: the videos, or a thumbnail pick. */
-type SidebarMode = { kind: 'videos' } | { kind: 'thumb'; slotKey: string; slotNumber: number }
+/** What the right sidebar is showing: the videos, a thumbnail pick, or a video swap. */
+type SidebarMode =
+  | { kind: 'videos' }
+  | { kind: 'thumb'; slotKey: string; slotNumber: number }
+  | { kind: 'replace'; slotKey: string; slotNumber: number }
 
 // All times in the creator are RELATIVE waits between posts (days + hours +
 // minutes) — no dates to pick. When the engine runs the script it anchors the
@@ -122,9 +130,83 @@ function fmtDuration(s: number): string {
   return `${m}:${sec.toString().padStart(2, '0')}`
 }
 
+function extractEditSlots(script: ScriptEntry): Array<{
+  itemId: string
+  groupId: string
+  thumbId: string | null
+  thumbGroupId: string | null
+  waitMs: number
+  accountId: string
+  keyId: string
+  slot: 1 | 2 | 3
+}> {
+  const drafts: Array<{
+    itemId: string
+    groupId: string
+    thumbId: string | null
+    thumbGroupId: string | null
+    at: number | null
+    accountId: string
+    keyId: string
+    slot: 1 | 2 | 3
+  }> = []
+  for (const action of script.actions) {
+    const input = (action.input || {}) as Record<string, unknown>
+    if (action.type === 'striker_batch') {
+      const slots = Array.isArray(input.slots) ? (input.slots as Array<Record<string, unknown>>) : []
+      for (const s of slots) {
+        if (!s.itemId || s.source === 'mine') continue
+        const at = s.scheduledFor ? new Date(String(s.scheduledFor)).getTime() : NaN
+        const th = (s.thumbnail || null) as Record<string, unknown> | null
+        drafts.push({
+          itemId: String(s.itemId),
+          groupId: String(s.groupId || ''),
+          thumbId: th?.itemId ? String(th.itemId) : null,
+          thumbGroupId: th?.groupId ? String(th.groupId) : null,
+          at: Number.isFinite(at) ? at : null,
+          accountId: String(s.accountId || TEMPLATE_REF.accountId),
+          keyId: String(s.keyId || TEMPLATE_REF.keyId),
+          slot: ([1, 2, 3].includes(Number(s.slot)) ? Number(s.slot) : 1) as 1 | 2 | 3
+        })
+      }
+    } else if (action.type === 'multi_post_group' && input.itemId) {
+      const at = input.scheduledFor ? new Date(String(input.scheduledFor)).getTime() : NaN
+      const th = (input.thumbnail || null) as Record<string, unknown> | null
+      const acc = action.accounts[0] || TEMPLATE_REF
+      drafts.push({
+        itemId: String(input.itemId),
+        groupId: String(input.groupId || ''),
+        thumbId: th?.itemId ? String(th.itemId) : null,
+        thumbGroupId: th?.groupId ? String(th.groupId) : null,
+        at: Number.isFinite(at) ? at : null,
+        accountId: acc.accountId,
+        keyId: acc.keyId,
+        slot: 1
+      })
+    }
+  }
+  return drafts.map((d, i) => {
+    const prev = i > 0 ? drafts[i - 1].at : null
+    const waitMs = i === 0 ? 0 : prev != null && d.at != null && d.at >= prev ? d.at - prev : HOUR_MS
+    return {
+      itemId: d.itemId,
+      groupId: d.groupId,
+      thumbId: d.thumbId,
+      thumbGroupId: d.thumbGroupId,
+      waitMs,
+      accountId: d.accountId,
+      keyId: d.keyId,
+      slot: d.slot
+    }
+  })
+}
+
 export default function ScriptCreatorScreen(props: {
   userId: string
   onSaved: () => void
+  /** When set, the creator updates this script instead of making a new one. */
+  editing?: ScriptEntry | null
+  onCancelEdit?: () => void
 }): JSX.Element {
   const [name, setName] = useState('')
   const [groups, setGroups] = useState<VaultGroup[] | null>(null)
@@ -139,10 +221,12 @@ export default function ScriptCreatorScreen(props: {
   const [saving, setSaving] = useState(false)
   const [savedMsg, setSavedMsg] = useState('')
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>({ kind: 'videos' })
+  const [hydrating, setHydrating] = useState(!!props.editing)
   // Right vault drawer — open by default on desktop, closed on small screens.
   const [vaultOpen, setVaultOpen] = useState(
     () => typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches
   )
+  const editing = props.editing || null
 
   // Schedule helper: delay before the first post + gap between posts, both as
   // days/hours/minutes AFTER the script runs.
@@ -177,13 +261,81 @@ export default function ScriptCreatorScreen(props: {
       try {
         const g = await listMyGroups()
         setGroups(g)
-        if (g.length === 1) setGroupId(g[0].id)
+        if (!editing && g.length === 1) setGroupId(g[0].id)
       } catch (e) {
         setGroups([])
         setError(e instanceof Error ? e.message : 'Could not load your groups.')
       }
     })()
-  }, [])
+  }, [editing])
+
+  useEffect(() => {
+    if (!editing) {
+      setHydrating(false)
+      setName('')
+      setSlots([])
+      setSavedMsg('')
+      return
+    }
+    let alive = true
+    setHydrating(true)
+    setName(editing.name)
+    setSavedMsg('')
+    setError(null)
+    void (async () => {
+      try {
+        const drafts = extractEditSlots(editing)
+        if (drafts.length === 0) {
+          if (alive) {
+            setSlots([])
+            setError(
+              'This script has no group-vault videos to edit here. Personal vault posts can be changed in the Fanciaga desktop app.'
+            )
+            setHydrating(false)
+          }
+          return
+        }
+        const ids = drafts.flatMap((d) => [d.itemId, d.thumbId || '']).filter(Boolean)
+        const loaded = await listVaultItemsByIds(ids)
+        if (!alive) return
+        const byId = new Map(loaded.map((i) => [i.id, i]))
+        const gid = drafts.find((d) => d.groupId)?.groupId || loaded[0]?.groupId || ''
+        if (gid) setGroupId(gid)
+        setSlots(
+          drafts.map((d) => ({
+            key: crypto.randomUUID(),
+            item:
+              byId.get(d.itemId) ||
+              ({
+                id: d.itemId,
+                groupId: d.groupId,
+                title: 'Deleted vault item',
+                kind: 'video',
+                durationSeconds: 0,
+                thumbUrl: null,
+                mediaPath: '',
+                tabId: null,
+                createdAt: Date.now()
+              } satisfies VaultItem),
+            waitMs: d.waitMs,
+            thumb: d.thumbId ? byId.get(d.thumbId) || null : null,
+            accountId: d.accountId,
+            keyId: d.keyId,
+            slot: d.slot
+          }))
+        )
+        if (drafts[0]) setFirstOffsetMs(drafts[0].waitMs)
+        if (drafts.length > 1) setGapMs(drafts[1].waitMs || HOUR_MS)
+      } catch (e) {
+        if (alive) setError(e instanceof Error ? e.message : 'Could not open this script for editing.')
+      } finally {
+        if (alive) setHydrating(false)
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [editing])
 
   async function loadItems(gid: string): Promise<void> {
     if (!gid) return
@@ -229,7 +381,15 @@ export default function ScriptCreatorScreen(props: {
 
   function removeSlot(key: string): void {
     setSlots((prev) => prev.filter((s) => s.key !== key))
-    setSidebarMode((m) => (m.kind === 'thumb' && m.slotKey === key ? { kind: 'videos' } : m))
+    setSidebarMode((m) =>
+      (m.kind === 'thumb' || m.kind === 'replace') && m.slotKey === key ? { kind: 'videos' } : m
+    )
+  }
+
+  function replaceVideo(slotKey: string, item: VaultItem): void {
+    setSavedMsg('')
+    setSlots((prev) => prev.map((s) => (s.key === slotKey ? { ...s, item } : s)))
+    setSidebarMode({ kind: 'videos' })
   }
 
   function moveSlot(key: string, dir: -1 | 1): void {
@@ -276,9 +436,9 @@ export default function ScriptCreatorScreen(props: {
       const strikerSlots = slots.map((s, i) => {
         cumulative += Math.max(0, s.waitMs)
         return {
-          accountId: TEMPLATE_REF.accountId,
-          keyId: TEMPLATE_REF.keyId,
-          slot: ((i % 3) + 1) as 1 | 2 | 3,
+          accountId: s.accountId || editing?.accounts[0]?.accountId || TEMPLATE_REF.accountId,
+          keyId: s.keyId || editing?.accounts[0]?.keyId || TEMPLATE_REF.keyId,
+          slot: s.slot || (((i % 3) + 1) as 1 | 2 | 3),
           source: 'group' as const,
           groupId: s.item.groupId,
           itemId: s.item.id,
@@ -288,27 +448,35 @@ export default function ScriptCreatorScreen(props: {
             : {})
         }
       })
+      const existingAction = editing?.actions.find((a) => a.type === 'striker_batch')
       const entry: ScriptEntry = {
-        id: crypto.randomUUID(),
+        id: editing?.id || crypto.randomUUID(),
         name: clean,
-        createdAt: Date.now(),
+        createdAt: editing?.createdAt || Date.now(),
         actions: [
           {
-            id: crypto.randomUUID(),
-            at: Date.now(),
+            id: existingAction?.id || crypto.randomUUID(),
+            at: existingAction?.at || Date.now(),
             type: 'striker_batch',
             summary: `Striker — ${strikerSlots.length} scheduled post${strikerSlots.length === 1 ? '' : 's'} (built in Fanciaga 3)`,
             input: { slots: strikerSlots },
-            accounts: [TEMPLATE_REF]
+            accounts: editing?.accounts?.length ? editing.accounts : [TEMPLATE_REF]
           }
         ],
-        accounts: [TEMPLATE_REF],
-        replacements: {}
+        accounts: editing?.accounts?.length ? editing.accounts : [TEMPLATE_REF],
+        replacements: editing?.replacements || {},
+        tabId: editing?.tabId ?? null
       }
       await saveScript(props.userId, entry)
-      setSavedMsg(`Saved “${clean}” — it's now in your Scripts section.`)
-      setName('')
-      setSlots([])
+      setSavedMsg(
+        editing
+          ? `Updated “${clean}” — videos and thumbnails are saved.`
+          : `Saved “${clean}” — it's now in your Scripts section.`
+      )
+      if (!editing) {
+        setName('')
+        setSlots([])
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not save the script.')
     } finally {
@@ -322,10 +490,13 @@ export default function ScriptCreatorScreen(props: {
       <div className="flex min-w-0 flex-1 flex-col gap-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <h1 className="text-lg font-semibold text-gray-100">Script Creator</h1>
+            <h1 className="text-lg font-semibold text-gray-100">
+              {editing ? 'Edit script' : 'Script Creator'}
+            </h1>
             <p className="mt-1 text-sm text-gray-500">
-              Build a Striker-style script from the group vault, set relative posting times, and save
-              it into Scripts. Multi-select accounts in Posting to replace the template on every run.
+              {editing
+                ? 'Change videos, thumbnails, or posting times, then save to update this script.'
+                : 'Build a Striker-style script from the group vault, set relative posting times, and save it into Scripts. Multi-select accounts in Posting to replace the template on every run.'}
             </p>
           </div>
           <button
@@ -367,12 +538,24 @@ export default function ScriptCreatorScreen(props: {
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
+          {editing && props.onCancelEdit && (
+            <button
+              className="shrink-0 rounded-xl border border-white/10 px-4 py-2.5 text-sm text-gray-300 hover:bg-white/[0.05]"
+              onClick={props.onCancelEdit}
+            >
+              Cancel
+            </button>
+          )}
           <button
             className="shrink-0 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-glow transition-transform hover:scale-[1.02] disabled:opacity-50"
-            disabled={saving || slots.length === 0 || !name.trim()}
+            disabled={saving || hydrating || slots.length === 0 || !name.trim()}
             onClick={() => void save()}
           >
-            {saving ? 'Saving…' : `Save script (${slots.length} post${slots.length === 1 ? '' : 's'})`}
+            {saving
+              ? 'Saving…'
+              : editing
+                ? `Save changes (${slots.length} post${slots.length === 1 ? '' : 's'})`
+                : `Save script (${slots.length} post${slots.length === 1 ? '' : 's'})`}
           </button>
         </div>
 
@@ -405,7 +588,11 @@ export default function ScriptCreatorScreen(props: {
             </div>
           </div>
 
-          {slots.length === 0 ? (
+          {hydrating ? (
+            <div className="mt-4 rounded-xl border border-dashed border-white/10 px-4 py-6 text-center text-xs text-gray-600">
+              Loading this script’s videos…
+            </div>
+          ) : slots.length === 0 ? (
             <div className="mt-4 rounded-xl border border-dashed border-white/10 px-4 py-6 text-center text-xs text-gray-600">
               Use <span className="text-gray-400">+ Add</span> on the vault videos (right sidebar) to
               stack them here in posting order.
@@ -445,6 +632,20 @@ export default function ScriptCreatorScreen(props: {
                         }
                       />
                       <span className="text-[10px] text-gray-600">{fmtOffset(cumulativeOffsets[i])}</span>
+                      <button
+                        className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] transition-colors ${
+                          sidebarMode.kind === 'replace' && sidebarMode.slotKey === s.key
+                            ? 'border-accent/60 bg-accent/15 text-accent'
+                            : 'border-white/10 text-gray-300 hover:bg-white/[0.05]'
+                        }`}
+                        onClick={() =>
+                          openVaultMode({ kind: 'replace', slotKey: s.key, slotNumber: i + 1 })
+                        }
+                        title="Replace this post’s video from the group vault"
+                      >
+                        <FilmIcon size={12} />
+                        <span>Change video</span>
+                      </button>
                       <button
                         className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] transition-colors ${
                           sidebarMode.kind === 'thumb' && sidebarMode.slotKey === s.key
@@ -539,8 +740,9 @@ export default function ScriptCreatorScreen(props: {
         onTabChange={setActiveTab}
         mode={sidebarMode}
         onAddVideo={addVideo}
+        onReplaceVideo={replaceVideo}
         onPickThumb={(slotKey, item) => setSlotThumb(slotKey, item)}
-        onCancelThumb={() => setSidebarMode({ kind: 'videos' })}
+        onCancelPick={() => setSidebarMode({ kind: 'videos' })}
       />
     </div>
   )
@@ -571,8 +773,9 @@ function VaultSidebar(props: {
   onTabChange: (tabId: string) => void
   mode: SidebarMode
   onAddVideo: (item: VaultItem) => void
+  onReplaceVideo: (slotKey: string, item: VaultItem) => void
   onPickThumb: (slotKey: string, item: VaultItem) => void
-  onCancelThumb: () => void
+  onCancelPick: () => void
 }): JSX.Element {
   const { mode } = props
   const [playing, setPlaying] = useState<VaultItem | null>(null)
@@ -614,6 +817,8 @@ function VaultSidebar(props: {
   }, [mode.kind, props.activeTab, props.groupId])
 
   const pickingThumb = mode.kind === 'thumb'
+  const replacing = mode.kind === 'replace'
+  const picking = pickingThumb || replacing
   const list = pickingThumb ? props.images : props.videos
   const activeTabName =
     props.activeTab === 'unsorted'
@@ -629,17 +834,23 @@ function VaultSidebar(props: {
       <div className="flex h-full max-h-none flex-col rounded-none border-0 bg-panel lg:max-h-[calc(100vh-6rem)] lg:sticky lg:top-0 lg:rounded-2xl lg:border lg:border-white/10 lg:bg-white/[0.03]">
         {/* Header */}
         <div className="shrink-0 border-b border-white/[0.06] p-3">
-          {pickingThumb ? (
+          {picking ? (
             <div className="flex items-center justify-between gap-2">
               <div className="min-w-0">
                 <div className="truncate text-sm font-semibold text-accent">
-                  Pick a thumbnail — post {mode.kind === 'thumb' ? mode.slotNumber : ''}
+                  {pickingThumb
+                    ? `Pick a thumbnail — post ${mode.kind === 'thumb' ? mode.slotNumber : ''}`
+                    : `Change video — post ${mode.kind === 'replace' ? mode.slotNumber : ''}`}
                 </div>
-                <p className="text-[11px] text-gray-500">Tap an image to use it as the 0.5s intro.</p>
+                <p className="text-[11px] text-gray-500">
+                  {pickingThumb
+                    ? 'Tap an image to use it as the 0.5s intro.'
+                    : 'Tap a video to replace this post.'}
+                </p>
               </div>
               <button
                 className="shrink-0 rounded-lg border border-white/10 px-2 py-1 text-[11px] text-gray-300 hover:bg-white/[0.05]"
-                onClick={props.onCancelThumb}
+                onClick={props.onCancelPick}
               >
                 Cancel
               </button>
@@ -734,7 +945,7 @@ function VaultSidebar(props: {
         </div>
 
         {/* In-sidebar player (videos mode only) */}
-        {playing && !pickingThumb ? (
+        {playing && !picking ? (
           <div className="flex min-h-0 flex-1 flex-col p-3">
             <div className="mb-2 flex items-center justify-between gap-2">
               <div className="min-w-0 truncate text-xs font-medium text-gray-200">{playing.title}</div>
@@ -806,9 +1017,16 @@ function VaultSidebar(props: {
                       className="block w-full overflow-hidden rounded-lg border border-white/[0.06] bg-black/30 transition-colors hover:border-accent/60"
                       onClick={() => {
                         if (pickingThumb && mode.kind === 'thumb') props.onPickThumb(mode.slotKey, v)
+                        else if (replacing && mode.kind === 'replace') props.onReplaceVideo(mode.slotKey, v)
                         else void play(v)
                       }}
-                      title={pickingThumb ? `Use “${v.title}” as the thumbnail` : `Preview “${v.title}”`}
+                      title={
+                        pickingThumb
+                          ? `Use “${v.title}” as the thumbnail`
+                          : replacing
+                            ? `Use “${v.title}” for this post`
+                            : `Preview “${v.title}”`
+                      }
                     >
                       <div className="relative aspect-[9/16] w-full">
                         {v.thumbUrl ? (
@@ -823,7 +1041,7 @@ function VaultSidebar(props: {
                             {fmtDuration(v.durationSeconds)}
                           </span>
                         )}
-                        {!pickingThumb && (
+                        {!picking && (
                           <span className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
                             <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white/90 text-black">
                               <PlayIcon size={12} />
@@ -832,7 +1050,7 @@ function VaultSidebar(props: {
                         )}
                       </div>
                     </button>
-                    {!pickingThumb && (
+                    {!picking && (
                       <button
                         className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-semibold text-white opacity-0 transition-opacity hover:bg-accent group-hover:opacity-100"
                         onClick={() => props.onAddVideo(v)}

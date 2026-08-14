@@ -104,6 +104,7 @@ export default function HomeScreen(props: {
   const [link, setLink] = useState<EngineLink | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [pickedScript, setPickedScript] = useState<ScriptEntry | null>(null)
+  const [editingScript, setEditingScript] = useState<ScriptEntry | null>(null)
   const [instances, setInstances] = useState<EngineInstance[]>([])
   const [assignOpen, setAssignOpen] = useState(false)
   // Connected by engine code (guest mode) — the engine belongs to someone
@@ -112,6 +113,7 @@ export default function HomeScreen(props: {
   const [codeEngine, setCodeEngine] = useState<CodeEngine | null>(null)
 
   function setView(v: View): void {
+    if (v !== 'creator') setEditingScript(null)
     setViewState(v)
     try {
       localStorage.setItem(VIEW_KEY, v)
@@ -246,7 +248,10 @@ export default function HomeScreen(props: {
                   ? 'bg-accent/15 text-white'
                   : 'text-gray-400 hover:bg-white/[0.05] hover:text-gray-100'
               }`}
-              onClick={() => setView(item.id)}
+              onClick={() => {
+                if (item.id === 'creator') setEditingScript(null)
+                setView(item.id)
+              }}
             >
               <span className="shrink-0 opacity-90">{item.icon}</span>
               {item.label}
@@ -393,9 +398,32 @@ export default function HomeScreen(props: {
                 setPickedScript(s)
                 setView('posting')
               }}
+              onEdit={(s) => {
+                setEditingScript(s)
+                setViewState('creator')
+                try {
+                  localStorage.setItem(VIEW_KEY, 'creator')
+                } catch {
+                  // storage unavailable
+                }
+                if (typeof window !== 'undefined' && window.matchMedia('(max-width: 1023px)').matches) {
+                  setNavOpen(false)
+                }
+              }}
             />
           ) : view === 'creator' ? (
-            <ScriptCreatorScreen userId={props.userId} onSaved={() => setView('scripts')} />
+            <ScriptCreatorScreen
+              userId={props.userId}
+              editing={editingScript}
+              onSaved={() => {
+                setEditingScript(null)
+                setView('scripts')
+              }}
+              onCancelEdit={() => {
+                setEditingScript(null)
+                setView('scripts')
+              }}
+            />
           ) : view === 'history' ? (
             <HistoryScreen userId={props.userId} />
           ) : (

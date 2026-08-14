@@ -42,17 +42,32 @@ export async function renameScript(id: string, name: string): Promise<void> {
   if (error) throw new Error(error.message || 'Could not rename the script.')
 }
 
-/** Save a script built in the PWA's Script Creator to the cloud. */
+/** Save a script built in the PWA's Script Creator. Updates in place when the id already exists. */
 export async function saveScript(userId: string, entry: ScriptEntry): Promise<void> {
-  const { error } = await supabase.from('scripts').insert({
+  const now = new Date().toISOString()
+  const row = {
     id: entry.id,
     user_id: userId,
     name: entry.name,
     actions: entry.actions,
     accounts: { list: entry.accounts, replacements: entry.replacements },
     tab_id: entry.tabId || null,
-    created_at: new Date(entry.createdAt).toISOString(),
-    updated_at: new Date().toISOString()
+    updated_at: now
+  }
+  const { data: existing, error: lookupError } = await supabase
+    .from('scripts')
+    .select('id')
+    .eq('id', entry.id)
+    .maybeSingle()
+  if (lookupError) throw new Error(lookupError.message || 'Could not save the script.')
+  if (existing) {
+    const { error } = await supabase.from('scripts').update(row).eq('id', entry.id)
+    if (error) throw new Error(error.message || 'Could not update the script.')
+    return
+  }
+  const { error } = await supabase.from('scripts').insert({
+    ...row,
+    created_at: new Date(entry.createdAt).toISOString()
   })
   if (error) throw new Error(error.message || 'Could not save the script.')
 }
