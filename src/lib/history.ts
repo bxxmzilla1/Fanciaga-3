@@ -110,6 +110,94 @@ export async function listRuns(userId: string): Promise<ScriptRun[]> {
 }
 
 /**
+ * Reconcile in-flight runs against the engine's OWN command statuses. The
+ * Fanciaga app each run was addressed to (own engine or by code) updates its
+ * `engine_commands` row at every step — pending → running → done/error — so
+ * that row is the live truth even when the tab that started the run is long
+ * closed. Runs already in a final state are never touched (so a local
+ * "Force stopped." isn't resurrected while the engine winds down).
+ * Status changes are written back to `script_runs` (best-effort) so History
+ * shows the same live picture on every device.
+ */
+export async function syncRunsWithEngine(runs: ScriptRun[]): Promise<ScriptRun[]> {
+  const inFlight = (r: ScriptRun): boolean =>
+    (r.status === 'queued' || r.status === 'running') && !!r.commandId
+  const open = runs.filter(inFlight)
+  if (!open.length) return runs
+
+  let rows: Array<Record<string, unknown>>
+  try {
+    const { data, error } = await supabase
+      .from('engine_commands')
+      .select('id, status, result')
+      .in('id', [...new Set(open.map((r) => r.commandId))])
+    if (error) return runs
+    rows = (data as Array<Record<string, unknown>>) || []
+  } catch {
+    return runs
+  }
+  const byId = new Map(rows.map((r) => [String(r.id), r]))
+
+  const next = runs.map((run): ScriptRun => {
+    if (!inFlight(run)) return run
+    const cmd = byId.get(run.commandId)
+    if (!cmd) {
+      // Command row gone — the engine cleans them up (~24h) or it was
+      // force-deleted. A fresh run can also just be read-after-write lag, so
+      // only close out clearly stale ones.
+      if (Date.now() - run.createdAt > 10 * 60_000) {
+        return {
+          ...run,
+          status: 'error',
+          error: 'The engine no longer has this run — retry it or start it again from Posting.',
+          doneAt: run.doneAt ?? Date.now()
+        }
+      }
+      return run
+    }
+    const status = String(cmd.status)
+    const result = (cmd.result ?? {}) as Record<string, unknown>
+    if (status === 'pending') return run.status === 'queued' ? run : { ...run, status: 'queued' }
+    if (status === 'running') return run.status === 'running' ? run : { ...run, status: 'running' }
+    if (status === 'done') {
+      const ok = !!result.ok
+      const errs = Array.isArray(result.errors)
+        ? (result.errors as Array<Record<string, unknown>>)
+        : []
+      const msg = typeof errs[0]?.error === 'string' ? String(errs[0].error) : ''
+      return {
+        ...run,
+        status: ok ? 'done' : 'error',
+        error: ok ? '' : msg || 'The engine reported an error.',
+        doneAt: run.doneAt ?? Date.now()
+      }
+    }
+    if (status === 'error') {
+      return {
+        ...run,
+        status: 'error',
+        error: typeof result.error === 'string' ? result.error : 'The engine reported an error.',
+        doneAt: run.doneAt ?? Date.now()
+      }
+    }
+    return run
+  })
+
+  // Persist whatever changed so other devices see the same statuses.
+  next.forEach((run, i) => {
+    if (runs[i].status !== run.status || runs[i].error !== run.error) {
+      void updateRun(run.id, run.status, run.error || undefined)
+    }
+  })
+  return next
+}
+
+/** Run history, live-reconciled with the engine's command statuses. */
+export async function listRunsSynced(userId: string): Promise<ScriptRun[]> {
+  return syncRunsWithEngine(await listRuns(userId))
+}
+
+/**
  * Retry a run: re-send the EXACT original command (same script, same account
  * replacements, same target engine) as a brand-new engine command, with a new
  * history row to track it. The old history row is deleted — the retry

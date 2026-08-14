@@ -14,7 +14,7 @@ import {
   type ScriptEntry,
   type StackedRunItem
 } from '../lib/types'
-import { listRuns, recordRun, setRunCommand, updateRun, type ScriptRun } from '../lib/history'
+import { listRunsSynced, recordRun, setRunCommand, updateRun, type ScriptRun } from '../lib/history'
 import { findMissingScriptMedia } from '../lib/preview'
 import { CheckIcon, CloseIcon, ScriptIcon } from './Icons'
 
@@ -133,7 +133,9 @@ export default function PostingScreen(props: {
     let alive = true
     const loadRuns = async (): Promise<void> => {
       try {
-        const runs = await listRuns(props.userId) // newest first
+        // Newest first, with each run's status reconciled live against the
+        // engine's own command row — badges follow the engine, not the tab.
+        const runs = await listRunsSynced(props.userId)
         if (!alive) return
         const map = new Map<string, ScriptRun>()
         for (const r of runs) {
@@ -148,7 +150,7 @@ export default function PostingScreen(props: {
       }
     }
     void loadRuns()
-    const t = window.setInterval(() => void loadRuns(), 15_000)
+    const t = window.setInterval(() => void loadRuns(), 5_000)
     return () => {
       alive = false
       window.clearInterval(t)
@@ -283,7 +285,8 @@ export default function PostingScreen(props: {
           )
         ]
         const runId = await recordRun(props.userId, script, names)
-        void updateRun(runId, 'running')
+        // Status stays "queued" until the engine actually claims the command —
+        // History/badges sync it live from the engine's command row.
         try {
           const result = await runScriptOnEngine(
             props.userId,
@@ -323,7 +326,6 @@ export default function PostingScreen(props: {
         setStack((prev) =>
           prev.map((item, idx) => (idx === i ? { ...item, status: 'running' } : item))
         )
-        void updateRun(runIds[i], 'running')
         try {
           const result = await waitForEngineCommand(commandIds[i])
           setStack((prev) =>

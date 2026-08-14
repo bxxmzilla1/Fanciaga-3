@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { forceStopRun, listRuns, retryRun, updateRun, type ScriptRun } from '../lib/history'
+import { forceStopRun, listRunsSynced, retryRun, updateRun, type ScriptRun } from '../lib/history'
 import { waitForEngineCommand } from '../lib/engine'
 import { RefreshIcon, RocketIcon, StopIcon } from './Icons'
 
@@ -84,7 +84,10 @@ export default function HistoryScreen(props: { userId: string }): JSX.Element {
   async function load(silent = false): Promise<void> {
     if (!silent) setLoading(true)
     try {
-      setRuns(await listRuns(props.userId))
+      // listRunsSynced pulls each run's LIVE status straight from the engine's
+      // command row, so History tracks the Fanciaga app even when the tab
+      // that started the run is closed.
+      setRuns(await listRunsSynced(props.userId))
       setError(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load the run history.')
@@ -93,10 +96,11 @@ export default function HistoryScreen(props: { userId: string }): JSX.Element {
     }
   }
 
-  // Load on open + refresh quietly while runs are still in flight.
+  // Load on open + keep polling the engine's statuses while the section is
+  // open, so queued → running → done/failed updates appear within seconds.
   useEffect(() => {
     void load()
-    const t = window.setInterval(() => void load(true), 15_000)
+    const t = window.setInterval(() => void load(true), 5_000)
     return () => window.clearInterval(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.userId])
@@ -108,6 +112,10 @@ export default function HistoryScreen(props: { userId: string }): JSX.Element {
           <h1 className="text-lg font-semibold text-gray-100">History</h1>
           <p className="mt-1 text-sm text-gray-500">
             Every script you ran from Posting, with the Instagram accounts it targeted.
+          </p>
+          <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-gray-600">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
+            Live — statuses update from your Fanciaga engine every few seconds
           </p>
         </div>
         <button
